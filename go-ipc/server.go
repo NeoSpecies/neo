@@ -5,9 +5,8 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
-	"io" // 新增 io 包（用于 ReadAll）
+	"io"
 	"net"
-	"strings" // 新增 strings 包（用于 SplitN）
 	"sync"
 )
 
@@ -27,8 +26,7 @@ func RegisterService(name string, handler func(map[string]interface{}) (interfac
 
 // 启动 TCP 服务（传输层实现）
 func StartIpcServer(addr string) error {
-	// 修改监听地址为 IPv4（原 :9090 改为 127.0.0.1:9090）
-	listener, err := net.Listen("tcp", "127.0.0.1:9090") // 关键修改
+	listener, err := net.Listen("tcp", "127.0.0.1:9090")
 	if err != nil {
 		return err
 	}
@@ -47,28 +45,73 @@ func StartIpcServer(addr string) error {
 func handleConnection(conn net.Conn) {
 	defer conn.Close()
 	reader := bufio.NewReader(conn)
+	var err error // 统一声明 err 变量（整个函数作用域有效）
+	var (         // 新增变量声明块
+		version   byte   // 协议版本（1字节）
+		msgIDLen  uint16 // 消息ID长度（2字节）
+		methodLen uint16 // 方法名长度（2字节）
+		paramLen  uint32 // 参数内容长度（4字节）
+	)
 
-	// 跳过二进制协议解析（MVP 阶段简化）
-	// 直接读取完整请求数据（格式：method|params_json）
-	reqData, _ := io.ReadAll(reader)
-	if len(reqData) == 0 {
-		fmt.Println("接收到空请求数据") // 新增日志
+	// 1. 读取并验证魔数
+	magic, err := readUint16(reader) // 首次使用 := 声明 magic 和 err
+	if err != nil || magic != magicNumber {
+		errorMsg := fmt.Sprintf(`{"error_code": 4001, "error_msg": "invalid magic number: %v"}`, err)
+		conn.Write([]byte(errorMsg))
 		return
 	}
-	fmt.Printf("接收到请求数据：%s\n", string(reqData)) // 新增日志
 
-	// 按 "|" 分割方法名和参数
-	parts := strings.SplitN(string(reqData), "|", 2)
-	if len(parts) != 2 {
-		conn.Write([]byte(`{"error": "invalid request format"}`))
+	// 2. 读取协议版本（使用已声明的 version 变量）
+	version, err = reader.ReadByte() // 关键修改：version 已声明
+	if err != nil || version > 1 {
+		conn.Write([]byte(`{"error_code": 4002, "error_msg": "unsupported protocol version"}`))
 		return
 	}
-	method := parts[0]
-	paramData := parts[1]
 
-	// 反序列化参数（保持 JSON 格式）
+	// 3. 读取消息ID（使用已声明的 msgIDLen 变量）
+	msgIDLen, err = readUint16(reader) // 关键修改：msgIDLen 已声明
+	if err != nil {
+		conn.Write([]byte(`{"error_code": 4004, "error_msg": "read msgID length failed"}`))
+		return
+	}
+	msgIDBytes, err := readBytes(reader, int(msgIDLen)) // 首次使用 := 声明 msgIDBytes 和 err（新作用域）
+	if err != nil {
+		conn.Write([]byte(`{"error_code": 4005, "error_msg": "read msgID failed"}`))
+		return
+	}
+	msgID := string(msgIDBytes)
+
+	// 4. 读取方法名（使用已声明的 methodLen 变量）
+	methodLen, err = readUint16(reader) // 关键修改：methodLen 已声明
+	if err != nil {
+		conn.Write([]byte(`{"error_code": 4006, "error_msg": "read method length failed"}`))
+		return
+	}
+	methodBytes, err := readBytes(reader, int(methodLen)) // 首次使用 := 声明 methodBytes 和 err（新作用域）
+	if err != nil {
+		conn.Write([]byte(`{"error_code": 4007, "error_msg": "read method failed"}`))
+		return
+	}
+	method := string(methodBytes)
+
+	// 5. 读取参数内容（使用已声明的 paramLen 变量）
+	paramLen, err = readUint32(reader) // 关键修改：paramLen 已声明
+	if err != nil {
+		conn.Write([]byte(`{"error_code": 4008, "error_msg": "read param length failed"}`))
+		return
+	}
+	paramData, err := readBytes(reader, int(paramLen)) // 首次使用 := 声明 paramData 和 err（新作用域）
+	if err != nil {
+		conn.Write([]byte(`{"error_code": 4009, "error_msg": "read param data failed"}`))
+		return
+	}
+
+	// 6. 反序列化参数
 	var params map[string]interface{}
-	json.Unmarshal([]byte(paramData), &params)
+	if err := json.Unmarshal(paramData, &params); err != nil {
+		conn.Write([]byte(`{"error_code": 4003, "error_msg": "invalid parameter format"}`))
+		return
+	}
 
 	// 路由调用（设计文档路由分发）
 	registryLock.RLock()
@@ -76,7 +119,7 @@ func handleConnection(conn net.Conn) {
 	registryLock.RUnlock()
 
 	var result interface{}
-	var err error
+	// 关键修改：删除重复的 var err error 声明，直接使用已存在的 err 变量
 	if exists {
 		result, err = handler(params)
 	} else {
@@ -84,35 +127,42 @@ func handleConnection(conn net.Conn) {
 	}
 
 	// 返回响应（关键修改：添加日志和错误检查）
-	response, errMarshal := json.Marshal(map[string]interface{}{"result": result, "error": err})
+	response, errMarshal := json.Marshal(map[string]interface{}{
+		"msg_id": msgID,
+		"result": result,
+		"error":  err,
+	})
 	if errMarshal != nil {
 		fmt.Printf("响应序列化失败: %v\n", errMarshal)
 		return
 	}
-	n, errWrite := conn.Write(response)
-	if errWrite != nil {
-		fmt.Printf("响应发送失败: %v\n", errWrite)
-		return
-	}
-	fmt.Printf("成功发送响应（%d字节）: %s\n", n, string(response))
-	conn.Close() // 显式关闭连接，通知客户端数据已发送完成
+
+	// 按协议格式发送响应
+	respHeader := make([]byte, 0)
+	respHeader = binary.BigEndian.AppendUint16(respHeader, magicNumber)           // 魔数
+	respHeader = append(respHeader, version)                                      // 版本
+	respHeader = binary.BigEndian.AppendUint32(respHeader, uint32(len(response))) // 内容长度
+	conn.Write(append(respHeader, response...))
 }
 
-// 辅助函数（读取固定长度字节）
-func readUint16(reader *bufio.Reader) uint16 {
+// 辅助函数（读取固定长度字节，增加错误返回）
+func readUint16(reader *bufio.Reader) (uint16, error) {
 	var val uint16
-	binary.Read(reader, binary.BigEndian, &val)
-	return val
+	err := binary.Read(reader, binary.BigEndian, &val)
+	return val, err
 }
 
-func readUint32(reader *bufio.Reader) uint32 {
+func readUint32(reader *bufio.Reader) (uint32, error) {
 	var val uint32
-	binary.Read(reader, binary.BigEndian, &val)
-	return val
+	err := binary.Read(reader, binary.BigEndian, &val)
+	return val, err
 }
 
-func readBytes(reader *bufio.Reader, length int) []byte {
+func readBytes(reader *bufio.Reader, length int) ([]byte, error) {
 	buf := make([]byte, length)
-	reader.Read(buf)
-	return buf
+	n, err := io.ReadFull(reader, buf)
+	if err != nil {
+		return nil, fmt.Errorf("readBytes failed: read %d/%d bytes, err=%v", n, length, err)
+	}
+	return buf, nil
 }

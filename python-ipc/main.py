@@ -19,11 +19,33 @@ def call_go_service(method, params):
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         try:
             s.connect(("127.0.0.1", 9090))
-            param_data = json.dumps(params, ensure_ascii=False)  # 关闭转义（确保发送的参数含中文）
-            request = f"{method}|{param_data}".encode()
-            print(f"Python 发送的请求数据：{request}")
+            
+            # 1. 序列化参数（设计文档参数序列化）
+            param_data = json.dumps(params, ensure_ascii=False).encode()
+            
+            # 2. 生成消息ID（设计文档异步模式）
+            msg_id = str(uuid.uuid4()).encode()  # 需要import uuid
+            
+            # 3. 按协议格式封装请求（魔数+版本+消息ID+方法名+参数）
+            request = bytearray()
+            # 魔数（2字节，大端）
+            request.extend(struct.pack(">H", 0xAEBD))  # 需要import struct
+            # 版本（1字节）
+            request.append(0x01)
+            # 消息ID长度（2字节）+ 消息ID
+            request.extend(struct.pack(">H", len(msg_id)))
+            request.extend(msg_id)
+            # 方法名长度（2字节）+ 方法名
+            method_bytes = method.encode()
+            request.extend(struct.pack(">H", len(method_bytes)))
+            request.extend(method_bytes)
+            # 参数长度（4字节）+ 参数内容
+            request.extend(struct.pack(">I", len(param_data)))
+            request.extend(param_data)
+            
+            print(f"Python 发送的请求数据：{request.hex()}")
             s.send(request)
-            s.shutdown(socket.SHUT_WR)  # 关闭写端，通知 Go 服务数据已发送完成
+            s.shutdown(socket.SHUT_WR)
         except Exception as e:
             print(f"连接或发送数据失败：{e}")
             return ""
