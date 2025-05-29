@@ -87,8 +87,8 @@ class IpcServer:
             response.extend(response_body)  # 响应体内容
 
             # 新增：打印发送给 Go 的完整响应（二进制和 JSON 内容）
-            print(f"Python 发送给 Go 的响应（二进制）: {response.hex()}")
-            print(f"Python 发送给 Go 的响应（JSON 内容）: {response_body.decode('utf-8')}")
+            # print(f"Python 发送给 Go 的响应（二进制）: {response.hex()}")
+            # print(f"Python 发送给 Go 的响应（JSON 内容）: {response_body.decode('utf-8')}")
 
             conn.sendall(response)  # 发送响应
         except Exception as e:
@@ -100,8 +100,8 @@ class IpcServer:
             error_response.extend(struct.pack(">I", len(error_body)))
             error_response.extend(error_body)
             # 新增：打印错误响应（二进制和 JSON 内容）
-            print(f"Python 发送给 Go 的错误响应（二进制）: {error_response.hex()}")
-            print(f"Python 发送给 Go 的错误响应（JSON 内容）: {error_body.decode('utf-8')}")
+            # print(f"Python 发送给 Go 的错误响应（二进制）: {error_response.hex()}")
+            # print(f"Python 发送给 Go 的错误响应（JSON 内容）: {error_body.decode('utf-8')}")
             conn.sendall(error_response)
         finally:
             conn.close()

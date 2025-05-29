@@ -9,16 +9,27 @@ import (
 	"fmt"
 	"hash/crc32"
 	"io"
-	"net"
 	"net/http"
+	"os"
+	"time"
+
+	_ "net/http/pprof" // 匿名导入pprof，它会自动注册handler到默认的http.ServeMux
 
 	"github.com/google/uuid"
 )
 
+// 全局连接池
+var connPool *ConnPool
+
+// 初始化连接池
+func init() {
+	connPool = NewConnPool(100, 30*time.Second) // 最大100个连接，30秒超时
+}
+
 // 注册 Go 测试函数（供 Python 调用）
 func init() {
 	RegisterService("go.service.test", func(params map[string]interface{}) (interface{}, error) {
-		fmt.Printf("Go 服务接收到参数：%+v\n", params)
+		// fmt.Printf("Go 服务接收到参数：%+v\n", params)
 		return fmt.Sprintf("Go 测试函数返回：%v", params["input"]), nil
 	})
 }
@@ -26,19 +37,24 @@ func init() {
 func main() {
 	// 启动 IPC 服务
 	go func() {
+		fmt.Println("正在启动 IPC 服务...")
 		if err := StartIpcServer("127.0.0.1:9090"); err != nil {
 			fmt.Printf("IPC 服务启动失败: %v\n", err)
+			os.Exit(1) // 如果 IPC 服务启动失败，整个程序退出
 		}
 	}()
 
-	// 处理 HTTP 请求（合并原第一个 main 函数的逻辑）
+	// 等待 IPC 服务启动
+	time.Sleep(time.Second)
+
+	// 处理 HTTP 请求
 	http.HandleFunc("/trigger", func(w http.ResponseWriter, r *http.Request) {
-		fmt.Printf("接收到 HTTP 请求：%s %s\n", r.Method, r.URL.Path)
+		// fmt.Printf("接收到 HTTP 请求：%s %s\n", r.Method, r.URL.Path)
 
 		var req struct{ Input string }
 		err := json.NewDecoder(r.Body).Decode(&req)
 		if err != nil {
-			fmt.Printf("解码请求体失败：%v\n", err)
+			// fmt.Printf("解码请求体失败：%v\n", err)
 			http.Error(w, "无效的请求体", 400)
 			return
 		}
@@ -49,19 +65,15 @@ func main() {
 			return
 		}
 
-		// 新增：检查 Python 结果是否为 nil
 		if pythonResult == nil {
 			http.Error(w, "Python 服务返回空结果", 500)
 			return
 		}
 
-		// 新增：打印 Python 返回结果的实际类型（调试用）
-		fmt.Printf("Python 返回结果类型：%T\n", pythonResult)
+		// fmt.Printf("Python 返回结果类型：%T\n", pythonResult)
 
-		// 防御性检查：结果是否为 map 类型
 		result, ok := pythonResult.(map[string]interface{})
 		if !ok {
-			// 错误信息中包含实际类型，便于定位
 			http.Error(w, fmt.Sprintf("Python 响应类型错误，预期 map[string]interface{}，实际类型：%T", pythonResult), 500)
 			return
 		}
@@ -75,14 +87,12 @@ func main() {
 	// 处理文件上传
 	http.HandleFunc("/upload", handleFileUpload)
 
-	// 启动 HTTP 服务（合并端口监听）
 	fmt.Println("HTTP 服务启动，监听端口 8080")
-	http.ListenAndServe("127.0.0.1:8080", nil)
+	http.ListenAndServe("0.0.0.0:80", nil)
 }
 
-// 新增：HTTP 处理文件上传（原逻辑保留）
+// 修改文件上传处理函数，使用零拷贝
 func handleFileUpload(w http.ResponseWriter, r *http.Request) {
-	// 1. 解析 Apipost 上传的文件
 	file, header, err := r.FormFile("file")
 	if err != nil {
 		http.Error(w, "文件解析失败: "+err.Error(), http.StatusBadRequest)
@@ -90,14 +100,39 @@ func handleFileUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
-	// 2. 读取文件内容
-	content, err := io.ReadAll(file)
+	// 创建临时文件
+	tempFile, err := os.CreateTemp("", "upload-*")
 	if err != nil {
-		http.Error(w, "读取文件失败: "+err.Error(), http.StatusInternalServerError)
+		http.Error(w, "创建临时文件失败: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	// 使用 defer确保临时文件在函数结束时被关闭和删除
+	defer tempFile.Close()
+	defer os.Remove(tempFile.Name())
+
+	// 将上传的文件内容写入临时文件
+	if _, err := io.Copy(tempFile, file); err != nil {
+		http.Error(w, "保存文件失败: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	// 3. 构造 IPC 请求参数（传递给 Python）
+	// 重置文件指针到开始位置，以便读取内容
+	if _, err := tempFile.Seek(0, 0); err != nil {
+		http.Error(w, "重置文件指针失败: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// 读取临时文件内容
+	fileBytes, err := io.ReadAll(tempFile)
+	if err != nil {
+		http.Error(w, "读取临时文件失败: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// 将文件内容进行 Base64 编码
+	encodedContent := base64.StdEncoding.EncodeToString(fileBytes)
+
+	// 构造 IPC 请求参数
 	ipcParams := map[string]interface{}{
 		"files": []map[string]interface{}{
 			{
@@ -105,25 +140,23 @@ func handleFileUpload(w http.ResponseWriter, r *http.Request) {
 					"original_name": header.Filename,
 					"mimetype":      header.Header.Get("Content-Type"),
 				},
-				"content": content,
+				"content": encodedContent, // 传递 Base64 编码后的字符串
 			},
 		},
 	}
 
-	// 4. 通过 IPC 调用 Python 服务处理文件
+	// 通过 IPC 调用 Python 服务处理文件
 	pythonResult, err := callPythonIpcService("python.service.fileProcess", ipcParams)
 	if err != nil {
 		http.Error(w, "IPC 调用失败: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	// 防御性检查：结果是否为 nil
 	if pythonResult == nil {
 		http.Error(w, "Python 服务返回空结果", http.StatusInternalServerError)
 		return
 	}
 
-	// 安全类型断言
 	resultMap, ok := pythonResult.(map[string]interface{})
 	if !ok {
 		http.Error(w, "Python 响应类型错误，非预期的 map 类型", http.StatusInternalServerError)
@@ -136,21 +169,17 @@ func handleFileUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var processedFile map[string]interface{}                      // Declare variable
-	processedFile, ok = processedFileVal.(map[string]interface{}) // Use = instead of :=
+	processedFile, ok := processedFileVal.(map[string]interface{})
 	if !ok {
 		http.Error(w, "Python 响应中 processed_file 非预期的 map 类型", http.StatusInternalServerError)
 		return
 	}
 
-	// 提取字段时增加类型检查（示例：content 应为 Base64 字符串，需解码为字节数组）
 	contentStr, ok := processedFile["content"].(string)
 	if !ok {
 		http.Error(w, "Python 响应中 content 非预期的字符串类型", http.StatusInternalServerError)
 		return
 	}
-
-	// 解码 Base64 字符串为字节数组
 
 	fileContent, err := base64.StdEncoding.DecodeString(contentStr)
 	if err != nil {
@@ -169,162 +198,209 @@ func handleFileUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 最终返回文件
 	w.Header().Set("Content-Type", mimetype)
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", newName))
-	w.Write(fileContent) // Use renamed variable
+	w.Write(fileContent)
 }
 
-// 新增：IPC 调用 Python 服务的函数（简化版，需与协议匹配）
-// 新增：计算CRC32校验和的辅助函数
-func calculateChecksum(data []byte) uint32 {
-	// 导入 crc32 包以解决 undefined 错误
-
-	return crc32.ChecksumIEEE(data)
-}
-
-// 新增：累积请求数据的辅助变量（在构造请求时使用）
+// 修改IPC调用函数，使用连接池和压缩
 func callPythonIpcService(method string, params map[string]interface{}) (interface{}, error) {
-	conn, err := net.Dial("tcp", "127.0.0.1:9091")
+	// fmt.Printf("[DEBUG] 开始调用 Python 服务: method=%s, params=%+v\n", method, params)
+
+	// 从连接池获取连接
+	conn, err := connPool.Get("127.0.0.1:9091")
 	if err != nil {
+		// fmt.Printf("[ERROR] 连接 Python IPC 服务失败: %v\n", err)
 		return nil, fmt.Errorf("连接 Python IPC 服务失败: %v", err)
 	}
-	defer conn.Close()
+	defer connPool.Put("127.0.0.1:9091", conn)
+	// fmt.Printf("[DEBUG] 成功获取连接池连接\n")
 
-	// 1. 打包请求（与 Python 端 call_go_service 协议一致）
+	// 序列化参数
 	paramData, err := json.Marshal(params)
 	if err != nil {
+		// fmt.Printf("[ERROR] 参数序列化失败: %v\n", err)
 		return nil, fmt.Errorf("参数序列化失败: %v", err)
 	}
+	// fmt.Printf("[DEBUG] 参数序列化成功，长度: %d bytes\n", len(paramData))
+
+	// 检查是否需要压缩
+	if ShouldCompress(paramData) {
+		// fmt.Printf("[DEBUG] 数据需要压缩，原始大小: %d bytes\n", len(paramData))
+		compressedData, err := CompressData(paramData)
+		if err != nil {
+			// fmt.Printf("[ERROR] 压缩数据失败: %v\n", err)
+			return nil, fmt.Errorf("压缩数据失败: %v", err)
+		}
+		paramData = compressedData
+		// fmt.Printf("[DEBUG] 压缩后大小: %d bytes\n", len(paramData))
+	}
+
 	msgID := []byte(uuid.New().String())
-
 	request := new(bytes.Buffer)
-	var totalData []byte // 用于计算校验和的完整数据
+	totalData := new(bytes.Buffer)
 
-	// 魔数（2字节，大端）
+	// 写入协议头
 	magic := uint16(0xAEBD)
 	if err := binary.Write(request, binary.BigEndian, magic); err != nil {
+		// fmt.Printf("[ERROR] 写入魔数失败: %v\n", err)
 		return nil, fmt.Errorf("写入魔数失败: %v", err)
 	}
-	totalData = append(totalData, byte(magic>>8), byte(magic)) // 记录魔数到总数据
+	binary.Write(totalData, binary.BigEndian, magic)
+	// fmt.Printf("[DEBUG] 写入魔数: 0x%04X\n", magic)
 
-	// 版本（1字节）
 	version := byte(0x01)
 	if err := request.WriteByte(version); err != nil {
+		// fmt.Printf("[ERROR] 写入版本失败: %v\n", err)
 		return nil, fmt.Errorf("写入版本失败: %v", err)
 	}
-	totalData = append(totalData, version) // 记录版本到总数据
+	totalData.WriteByte(version)
+	// fmt.Printf("[DEBUG] 写入版本: %d\n", version)
 
-	// 消息 ID 长度（2字节）+ 消息 ID
 	msgIDLen := uint16(len(msgID))
 	if err := binary.Write(request, binary.BigEndian, msgIDLen); err != nil {
+		// fmt.Printf("[ERROR] 写入消息ID长度失败: %v\n", err)
 		return nil, fmt.Errorf("写入消息ID长度失败: %v", err)
 	}
 	if _, err := request.Write(msgID); err != nil {
+		// fmt.Printf("[ERROR] 写入消息ID失败: %v\n", err)
 		return nil, fmt.Errorf("写入消息ID失败: %v", err)
 	}
-	totalData = append(totalData, byte(msgIDLen>>8), byte(msgIDLen)) // 记录消息ID长度
-	totalData = append(totalData, msgID...)                          // 记录消息ID内容
+	binary.Write(totalData, binary.BigEndian, msgIDLen)
+	totalData.Write(msgID)
+	// fmt.Printf("[DEBUG] 写入消息ID: %s\n", string(msgID))
 
-	// 方法名长度（2字节）+ 方法名
 	methodBytes := []byte(method)
 	methodLen := uint16(len(methodBytes))
 	if err := binary.Write(request, binary.BigEndian, methodLen); err != nil {
+		// fmt.Printf("[ERROR] 写入方法名长度失败: %v\n", err)
 		return nil, fmt.Errorf("写入方法名长度失败: %v", err)
 	}
 	if _, err := request.Write(methodBytes); err != nil {
+		// fmt.Printf("[ERROR] 写入方法名失败: %v\n", err)
 		return nil, fmt.Errorf("写入方法名失败: %v", err)
 	}
-	totalData = append(totalData, byte(methodLen>>8), byte(methodLen)) // 记录方法名长度
-	totalData = append(totalData, methodBytes...)                      // 记录方法名内容
+	binary.Write(totalData, binary.BigEndian, methodLen)
+	totalData.Write(methodBytes)
+	// fmt.Printf("[DEBUG] 写入方法名: %s\n", method)
 
-	// 参数长度（4字节）+ 参数内容
 	paramLen := uint32(len(paramData))
 	if err := binary.Write(request, binary.BigEndian, paramLen); err != nil {
+		// fmt.Printf("[ERROR] 写入参数长度失败: %v\n", err)
 		return nil, fmt.Errorf("写入参数长度失败: %v", err)
 	}
 	if _, err := request.Write(paramData); err != nil {
+		// fmt.Printf("[ERROR] 写入参数内容失败: %v\n", err)
 		return nil, fmt.Errorf("写入参数内容失败: %v", err)
 	}
-	totalData = append(totalData, byte(paramLen>>24), byte(paramLen>>16), byte(paramLen>>8), byte(paramLen)) // 记录参数长度
-	totalData = append(totalData, paramData...)                                                              // 记录参数内容
+	binary.Write(totalData, binary.BigEndian, paramLen)
+	totalData.Write(paramData)
+	// fmt.Printf("[DEBUG] 写入参数，长度: %d bytes\n", paramLen)
 
-	// 计算并写入校验和（4字节，大端）
-	checksum := calculateChecksum(totalData)
+	// 写入文件数量（0）
+	fileCount := uint16(0)
+	if err := binary.Write(request, binary.BigEndian, fileCount); err != nil {
+		// fmt.Printf("[ERROR] 写入文件数量失败: %v\n", err)
+		return nil, fmt.Errorf("写入文件数量失败: %v", err)
+	}
+	binary.Write(totalData, binary.BigEndian, fileCount)
+	// fmt.Printf("[DEBUG] 写入文件数量: %d\n", fileCount)
+
+	// 计算校验和
+	checksum := crc32.ChecksumIEEE(totalData.Bytes())
 	if err := binary.Write(request, binary.BigEndian, checksum); err != nil {
+		// fmt.Printf("[ERROR] 写入校验和失败: %v\n", err)
 		return nil, fmt.Errorf("写入校验和失败: %v", err)
 	}
+	// fmt.Printf("[DEBUG] 写入校验和: 0x%08X\n", checksum)
 
 	// 发送请求
 	if _, err := conn.Write(request.Bytes()); err != nil {
+		// fmt.Printf("[ERROR] 发送请求失败: %v\n", err)
 		return nil, fmt.Errorf("发送请求失败: %v", err)
 	}
+	// fmt.Printf("[DEBUG] 成功发送请求，总长度: %d bytes\n", len(request.Bytes()))
 
-	// 2. 解析响应（与 server.go 协议一致）
-	reader := bufio.NewReader(conn) // Now uses correct bufio import
-	// 读取魔数（2字节）
+	reader := bufio.NewReader(conn)
 	magic, err = readUint16(reader)
 	if err != nil || magic != 0xAEBD {
+		// fmt.Printf("[ERROR] 响应魔数无效: 期望=0xAEBD, 实际=0x%04X, 错误=%v\n", magic, err)
 		return nil, fmt.Errorf("响应魔数无效: %v", err)
 	}
-	// 读取版本（1字节）
+	// fmt.Printf("[DEBUG] 读取响应魔数: 0x%04X\n", magic)
+
 	version, err = reader.ReadByte()
 	if err != nil || version > 1 {
+		// fmt.Printf("[ERROR] 不支持的响应版本: %d, 错误=%v\n", version, err)
 		return nil, fmt.Errorf("不支持的响应版本: %v", version)
 	}
-	// 读取响应体长度（4字节）
+	// fmt.Printf("[DEBUG] 读取响应版本: %d\n", version)
+
 	bodyLen, err := readUint32(reader)
 	if err != nil {
+		// fmt.Printf("[ERROR] 读取响应体长度失败: %v\n", err)
 		return nil, fmt.Errorf("读取响应体长度失败: %v", err)
 	}
-	// 读取响应体
+	// fmt.Printf("[DEBUG] 读取响应体长度: %d bytes\n", bodyLen)
+
 	bodyData, err := readBytes(reader, int(bodyLen))
 	if err != nil {
+		// fmt.Printf("[ERROR] 读取响应体失败: %v\n", err)
 		return nil, fmt.Errorf("读取响应体失败: %v", err)
 	}
+	// fmt.Printf("[DEBUG] 成功读取响应体，长度: %d bytes\n", len(bodyData))
 
-	// 反序列化响应（假设 Python 服务返回 JSON）
+	// 检查是否需要解压
+	if ShouldCompress(bodyData) {
+		fmt.Printf("[DEBUG] 响应数据需要解压，压缩大小: %d bytes\n", len(bodyData))
+		decompressedData, err := DecompressData(bodyData)
+		if err != nil {
+			fmt.Printf("[ERROR] 解压数据失败: %v\n", err)
+			return nil, fmt.Errorf("解压数据失败: %v", err)
+		}
+		bodyData = decompressedData
+		// fmt.Printf("[DEBUG] 解压后大小: %d bytes\n", len(bodyData))
+	}
+
 	var response map[string]interface{}
 	if err := json.Unmarshal(bodyData, &response); err != nil {
+		// fmt.Printf("[ERROR] 响应反序列化失败: %v\n", err)
+		// fmt.Printf("[DEBUG] 响应体内容: %s\n", string(bodyData))
 		return nil, fmt.Errorf("响应反序列化失败: %v", err)
 	}
-	// 新增：打印 Go 接收到的 Python 响应（关键日志）
+	// fmt.Printf("[DEBUG] 响应反序列化成功: %+v\n", response)
 
 	if response["error"] != nil {
+		fmt.Printf("[ERROR] Python 服务返回错误: %v\n", response["error"])
 		return nil, fmt.Errorf("Python 服务错误: %v", response["error"])
 	}
 
+	// fmt.Printf("[DEBUG] 成功获取 Python 服务响应: %+v\n", response["result"])
 	return response["result"], nil
 }
 
 // 辅助函数：按大端序读取 2 字节为 uint16
 func readUint16(reader *bufio.Reader) (uint16, error) {
-	b, err := reader.Peek(2)
-	if err != nil {
+	b := make([]byte, 2)
+	if _, err := io.ReadFull(reader, b); err != nil {
 		return 0, err
 	}
-	val := binary.BigEndian.Uint16(b)
-	// 消费已读取的字节
-	reader.Discard(2)
-	return val, nil
+	return binary.BigEndian.Uint16(b), nil
 }
 
 // 辅助函数：按大端序读取 4 字节为 uint32
 func readUint32(reader *bufio.Reader) (uint32, error) {
-	b, err := reader.Peek(4)
-	if err != nil {
+	b := make([]byte, 4)
+	if _, err := io.ReadFull(reader, b); err != nil {
 		return 0, err
 	}
-	val := binary.BigEndian.Uint32(b)
-	reader.Discard(4)
-	return val, nil
+	return binary.BigEndian.Uint32(b), nil
 }
 
 // 辅助函数：读取指定长度的字节
 func readBytes(reader *bufio.Reader, length int) ([]byte, error) {
 	b := make([]byte, length)
-	_, err := io.ReadFull(reader, b)
-	if err != nil {
+	if _, err := io.ReadFull(reader, b); err != nil {
 		return nil, err
 	}
 	return b, nil

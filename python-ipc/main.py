@@ -6,38 +6,38 @@ from server import IpcServer
 import socket
 import os  # 确保已导入 os（文件处理需要）
 import base64  # 将base64导入移至文件顶部，规范代码结构
-
+import io  # 新增：用于构造请求
 def python_demo_func(params):
-    print(f"Python 函数接收到参数：{params}")
+    # print(f"Python 函数接收到参数：{params}")
     
-    # 调用 Go 服务（显式解包返回的元组）
-    go_result, err = call_go_service("go.service.test", {
-        "input": params["input"] + " (Python 处理后)"
-    })
-    if err is not None:
-        raise Exception(f"调用 Go 服务失败: {err}")  # 处理错误情况
-    
-    return {
-        "python处理结果": "处理完成",
-        "go调用结果": go_result
-    }, None
-    
-    # 调用 Go 的测试函数（设计文档跨语言调用）
-    # 新增：支持传递文件参数（示例）
-    files = params.get("files", [])  # 假设参数中包含文件列表
-    go_result = call_go_service("go.service.test", {
-        "input": params["input"] + " (Python 处理后)",
-        "files_info": [f["meta"] for f in files]  # 传递文件元数据摘要
-    }, files)  # 新增：传递文件对象
-    
-    return {
-        "python处理结果": "处理完成",
-        "go调用结果": go_result
-    }
+    try:
+        # 调用 Go 服务
+        go_result, err = call_go_service("go.service.test", {
+            "input": params["input"] + " (Python 处理后)"
+        })
+        if err is not None:
+            # print(f"调用 Go 服务失败: {err}")
+            return {
+                "python处理结果": "处理完成",
+                "go调用结果": None,
+                "error": err
+            }, None
+        
+        return {
+            "python处理结果": "处理完成",
+            "go调用结果": go_result
+        }, None
+    except Exception as e:
+        # print(f"Python 服务异常: {str(e)}")
+        return {
+            "python处理结果": "处理完成",
+            "go调用结果": None,
+            "error": str(e)
+        }, None
 
 def python_file_process_func(params):
     """处理文件并返回修改后的文件信息（注：content字段为Base64编码字符串，接收方需解码）"""
-    print(f"Python 接收到文件处理请求，参数：{params}")
+    # print(f"Python 接收到文件处理请求，参数：{params}")
     files = params.get("files", [])
     if not files:
         return None, "未接收到文件数据"
@@ -57,11 +57,11 @@ def python_file_process_func(params):
         os.makedirs("./processed_files", exist_ok=True)
         with open(f"./processed_files/{new_name}", "wb") as f:
             f.write(content)
-        print(f"文件已保存：{new_name}")
+        # print(f"文件已保存：{new_name}")
 
         # 重新编码为Base64字符串（标准编码，接收方需用base64.StdEncoding解码）
         encoded_content = base64.b64encode(content).decode()
-        print(f"返回的content（Base64字符串前50字符）：{encoded_content[:50]}")  # 关键调试日志
+        # print(f"返回的content（Base64字符串前50字符）：{encoded_content[:50]}")  # 关键调试日志
         
         return {
             "processed_file": {
@@ -77,107 +77,157 @@ def call_go_service(method, params, files=None):
     """
     扩展支持文件传输的调用函数
     """
-    print(f"Python 调用 Go 服务：method={method}, params={params}, files={len(files) if files else 0}")
+    # print(f"[DEBUG] Python 调用 Go 服务：method={method}, params={params}, files={len(files) if files else 0}")
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         try:
             # 完整逻辑放入 try 块（包括连接、发送、接收、解析）
+            # print("[DEBUG] 正在连接 Go 服务...")
             s.connect(("127.0.0.1", 9090))
+            # print("[DEBUG] 成功连接到 Go 服务")
             
             # 1. 序列化基础参数（JSON）
             param_data = json.dumps(params, ensure_ascii=False).encode()
+            # print(f"[DEBUG] 参数序列化成功，长度: {len(param_data)} bytes")
             
             # 2. 生成消息ID（UUID）
             msg_id = str(uuid.uuid4()).encode()
+            # print(f"[DEBUG] 生成消息ID: {msg_id.decode()}")
             
             # 3. 初始化协议数据缓冲区
-            request = bytearray()
+            request = io.BytesIO()
+            total_data = io.BytesIO()
             
             # 4. 写入魔数（2字节，大端）
-            request.extend(struct.pack(">H", 0xAEBD))  # 与Go端魔数一致
+            magic = struct.pack(">H", 0xAEBD)  # 与Go端魔数一致
+            request.write(magic)
+            total_data.write(magic)
+            # print("[DEBUG] 写入魔数: 0xAEBD")
             
             # 5. 写入版本号（1字节）
-            request.append(0x01)  # 当前版本1
+            version = bytes([0x01])  # 当前版本1
+            request.write(version)
+            total_data.write(version)
+            # print("[DEBUG] 写入版本号: 1")
             
             # 6. 写入消息ID（长度2字节 + 内容）
-            request.extend(struct.pack(">H", len(msg_id)))
-            request.extend(msg_id)
+            msg_id_len = struct.pack(">H", len(msg_id))
+            request.write(msg_id_len)
+            request.write(msg_id)
+            total_data.write(msg_id_len)
+            total_data.write(msg_id)
+            
+            # print(f"[DEBUG] 写入消息ID: {msg_id.decode()}")
             
             # 7. 写入方法名（长度2字节 + 内容）
             method_bytes = method.encode()
-            request.extend(struct.pack(">H", len(method_bytes)))
-            request.extend(method_bytes)
+            method_len = struct.pack(">H", len(method_bytes))
+            request.write(method_len)
+            request.write(method_bytes)
+            total_data.write(method_len)
+            total_data.write(method_bytes)
+            # print(f"[DEBUG] 写入方法名: {method}")
             
             # 8. 写入参数内容（长度4字节 + 内容）
-            request.extend(struct.pack(">I", len(param_data)))
-            request.extend(param_data)
+            param_len = struct.pack(">I", len(param_data))
+            request.write(param_len)
+            request.write(param_data)
+            total_data.write(param_len)
+            total_data.write(param_data)
+            # print(f"[DEBUG] 写入参数内容，长度: {len(param_data)} bytes")
             
             # 9. 写入文件数量（2字节，大端）
             file_count = len(files) if files else 0
-            request.extend(struct.pack(">H", file_count))
+            file_count_bytes = struct.pack(">H", file_count)
+            request.write(file_count_bytes)
+            total_data.write(file_count_bytes)
+            # print(f"[DEBUG] 写入文件数量: {file_count}")
             
             # 10. 写入文件元数据和内容（逐个处理）
-            total_data = bytearray()  # 用于计算校验和的完整数据
-            total_data.extend(request)  # 基础部分已包含魔数、版本等
-            
             for file in files or []:
                 # 元数据（长度2字节 + 内容）
                 meta_data = json.dumps(file["meta"], ensure_ascii=False).encode()
-                request.extend(struct.pack(">H", len(meta_data)))
-                request.extend(meta_data)
-                total_data.extend(struct.pack(">H", len(meta_data)))
-                total_data.extend(meta_data)
+                meta_len = struct.pack(">H", len(meta_data))
+                request.write(meta_len)
+                request.write(meta_data)
+                total_data.write(meta_len)
+                total_data.write(meta_data)
+                # print(f"[DEBUG] 写入文件元数据，长度: {len(meta_data)} bytes")
                 
                 # 内容（长度4字节 + 内容）
                 content = file["content"]
-                request.extend(struct.pack(">I", len(content)))
-                request.extend(content)
-                total_data.extend(struct.pack(">I", len(content)))
-                total_data.extend(content)
+                content_len = struct.pack(">I", len(content))
+                request.write(content_len)
+                request.write(content)
+                total_data.write(content_len)
+                total_data.write(content)
+                # print(f"[DEBUG] 写入文件内容，长度: {len(content)} bytes")
             
             # 11. 计算并写入校验和（4字节，大端）
-            checksum = zlib.crc32(total_data)
-            request.extend(struct.pack(">I", checksum))
+            total_data_bytes = total_data.getvalue()
+            checksum = zlib.crc32(total_data_bytes)
+            request.write(struct.pack(">I", checksum))
+            # print(f"[DEBUG] 写入校验和: 0x{checksum:08X}")
+            # print(f"[DEBUG] 校验和计算数据长度: {len(total_data_bytes)} bytes")
             
             # 发送完整请求
-            print(f"Python 发送的请求数据长度：{len(request)} bytes")
-            s.send(request)
+            request_data = request.getvalue()
+            # print(f"[DEBUG] 发送请求，总长度: {len(request_data)} bytes")
+            s.sendall(request_data)
             s.shutdown(socket.SHUT_WR)
+            # print("[DEBUG] 请求发送完成")
 
-            # 接收响应数据（新增：打印完整响应的二进制信息）
-            data = []
+            # 接收响应数据
+            response_data = bytearray()
             while True:
                 chunk = s.recv(1024)
                 if not chunk:
                     break
-                data.append(chunk)
-            full_response = b''.join(data)
-            print(f"Python 接收到完整响应（二进制）：长度={len(full_response)} bytes，内容（前50字节）={full_response[:50].hex()}")  # 新增日志
-
-            # 解析协议头（新增：打印协议头关键字段）
-            if len(full_response) < 7:
+                response_data.extend(chunk)
+            
+            #print(f"[DEBUG] 接收到响应，长度: {len(response_data)} bytes")
+            
+            # 解析响应头
+            if len(response_data) < 7:
                 raise Exception("响应数据不完整，协议头缺失")
             
-            magic = full_response[0:2]
-            print(f"解析魔数：实际值={magic.hex()}，预期值=AEBD（大端序）")  # 新增日志
+            # 解析魔数
+            magic = struct.unpack(">H", response_data[0:2])[0]
+            # print(f"[DEBUG] 解析魔数：实际值={magic:04x}，预期值=AEBD")
+            if magic != 0xAEBD:
+                raise Exception(f"无效的魔数：{magic:04x}")
             
-            version = full_response[2]  # 版本号在第3字节（索引2）
-            print(f"解析版本号：实际值={version}，预期值=1")  # 新增日志
+            # 解析版本号
+            version = response_data[2]
+            # print(f"[DEBUG] 解析版本号：实际值={version}，预期值=1")
+            if version != 0x01:
+                raise Exception(f"不支持的版本号：{version}")
             
-            body_length = int.from_bytes(full_response[3:7], byteorder='big')
-            print(f"解析响应体长度：实际值={body_length} bytes")  # 新增日志
-
-            body_data = full_response[7:7+body_length]
-            print(f"提取响应体：实际长度={len(body_data)} bytes，预期长度={body_length} bytes")  # 新增日志
-
-            # 解析响应体内容（新增：打印解码后的原始字符串和JSON解析结果）
-            response = body_data.decode('utf-8')
-            print(f"Python 接收到 Go 响应（字符串）：{response}")  # 原有日志（保留）
-            result = json.loads(response)
-            print(f"Python 解析 Go 响应（JSON）：{result}")  # 新增日志
-
-            return result, None
+            # 解析响应体长度
+            body_length = struct.unpack(">I", response_data[3:7])[0]
+            # print(f"[DEBUG] 解析响应体长度：实际值={body_length} bytes")
+            
+            # 提取响应体
+            if len(response_data) < 7 + body_length:
+                raise Exception(f"响应体数据不完整：需要 {body_length} 字节，实际只有 {len(response_data)-7} 字节")
+            
+            body_data = response_data[7:7+body_length]
+            # print(f"[DEBUG] 提取响应体：实际长度={len(body_data)} bytes，预期长度={body_length} bytes")
+            
+            # 解析响应体
+            try:
+                response = json.loads(body_data.decode('utf-8'))
+                # print(f"[DEBUG] 解析响应体（JSON）：{response}")
+                if response.get("error") is not None: 
+                    # print(f"[ERROR] Go 服务返回错误: {response['error']}")
+                    return None, response["error"]
+                # print(f"[DEBUG] 成功获取 Go 服务响应: {response.get('result')}")
+                return response.get("result"), None
+            except json.JSONDecodeError as e:
+                # print(f"[ERROR] 响应体解析失败：{str(e)}")
+                # print(f"[DEBUG] 响应体内容：{body_data.decode('utf-8', errors='replace')}")
+                raise Exception(f"响应体解析失败：{str(e)}")
         except Exception as e:
-            print(f"连接或发送数据失败：{e}")
+            # print(f"[ERROR] 连接或发送数据失败：{e}")
             return None, str(e)
 
 if __name__ == "__main__":

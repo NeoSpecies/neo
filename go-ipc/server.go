@@ -17,6 +17,14 @@ const magicNumber = 0xAEBD
 var serviceRegistry = make(map[string]func(map[string]interface{}) (interface{}, error))
 var registryLock sync.RWMutex
 
+// 全局协程池
+var workerPool *WorkerPool
+
+// 初始化协程池
+func init() {
+	workerPool = NewWorkerPool(100) // 创建100个工作协程的协程池
+}
+
 // 注册服务（供 Go/Python 服务调用）
 func RegisterService(name string, handler func(map[string]interface{}) (interface{}, error)) {
 	registryLock.Lock()
@@ -26,19 +34,37 @@ func RegisterService(name string, handler func(map[string]interface{}) (interfac
 
 // 启动 TCP 服务（传输层实现）
 func StartIpcServer(addr string) error {
-	listener, err := net.Listen("tcp", "127.0.0.1:9090")
+	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		return err
 	}
-	fmt.Printf("IPC Server listening on %s\n", "127.0.0.1:9090")
+	fmt.Printf("IPC Server listening on %s\n", addr)
 
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
 			continue
 		}
-		go handleConnection(conn)
+		// 使用协程池处理连接
+		workerPool.Submit(func() {
+			handleConnection(conn)
+		})
 	}
+}
+
+// 发送错误响应
+func sendErrorResponse(conn net.Conn, errorMsg string) {
+	// 构造响应头
+	header := make([]byte, 0)
+	header = binary.BigEndian.AppendUint16(header, magicNumber)
+	header = append(header, 0x01) // 版本号
+
+	// 构造响应体
+	body := []byte(errorMsg)
+	header = binary.BigEndian.AppendUint32(header, uint32(len(body)))
+
+	// 发送完整响应
+	conn.Write(append(header, body...))
 }
 
 // 处理连接（协议解析核心）
@@ -61,16 +87,18 @@ func handleConnection(conn net.Conn) {
 	if err != nil || magic != magicNumber {
 		// 修复：补充具体错误信息（包含实际魔数值）
 		errorMsg := fmt.Sprintf(`{"error_code": 4001, "error_msg": "invalid magic number, expected %#x, got %v"}`, magicNumber, magic)
-		conn.Write([]byte(errorMsg))
+		sendErrorResponse(conn, errorMsg)
 		return
 	}
+	// 将魔数添加到总数据中
+	totalData = append(totalData, byte(magic>>8), byte(magic))
 
 	// 2. 读取协议版本
 	version, err = reader.ReadByte()
 	if err != nil || version > 1 {
 		// 修复：补充实际版本号
 		errorMsg := fmt.Sprintf(`{"error_code": 4002, "error_msg": "unsupported protocol version, expected <=1, got %d"}`, version)
-		conn.Write([]byte(errorMsg))
+		sendErrorResponse(conn, errorMsg)
 		return
 	}
 	totalData = append(totalData, version) // 记录版本到总数据
@@ -78,12 +106,12 @@ func handleConnection(conn net.Conn) {
 	// 3. 读取消息ID
 	msgIDLen, err = readUint16(reader)
 	if err != nil {
-		conn.Write([]byte(`{"error_code": 4004, "error_msg": "read msgID length failed"}`))
+		sendErrorResponse(conn, `{"error_code": 4004, "error_msg": "read msgID length failed"}`)
 		return
 	}
 	msgIDBytes, err := readBytes(reader, int(msgIDLen))
 	if err != nil {
-		conn.Write([]byte(`{"error_code": 4005, "error_msg": "read msgID failed"}`))
+		sendErrorResponse(conn, `{"error_code": 4005, "error_msg": "read msgID failed"}`)
 		return
 	}
 	msgID := string(msgIDBytes)
@@ -95,12 +123,12 @@ func handleConnection(conn net.Conn) {
 	// 4. 读取方法名
 	methodLen, err = readUint16(reader)
 	if err != nil {
-		conn.Write([]byte(`{"error_code": 4006, "error_msg": "read method length failed"}`))
+		sendErrorResponse(conn, `{"error_code": 4006, "error_msg": "read method length failed"}`)
 		return
 	}
 	methodBytes, err := readBytes(reader, int(methodLen))
 	if err != nil {
-		conn.Write([]byte(`{"error_code": 4007, "error_msg": "read method failed"}`))
+		sendErrorResponse(conn, `{"error_code": 4007, "error_msg": "read method failed"}`)
 		return
 	}
 	method := string(methodBytes)
@@ -112,17 +140,17 @@ func handleConnection(conn net.Conn) {
 	// 5. 读取参数内容
 	paramLen, err = readUint32(reader)
 	if err != nil {
-		conn.Write([]byte(`{"error_code": 4008, "error_msg": "read param length failed"}`))
+		sendErrorResponse(conn, `{"error_code": 4008, "error_msg": "read param length failed"}`)
 		return
 	}
 	paramData, err := readBytes(reader, int(paramLen))
 	if err != nil {
-		conn.Write([]byte(`{"error_code": 4009, "error_msg": "read param data failed"}`))
+		sendErrorResponse(conn, `{"error_code": 4009, "error_msg": "read param data failed"}`)
 		return
 	}
 	var params map[string]interface{}
 	if err := json.Unmarshal(paramData, &params); err != nil {
-		conn.Write([]byte(`{"error_code": 4003, "error_msg": "invalid parameter format"}`))
+		sendErrorResponse(conn, `{"error_code": 4003, "error_msg": "invalid parameter format"}`)
 		return
 	}
 	// 拆分追加操作，避免 append 参数过多问题
@@ -135,7 +163,7 @@ func handleConnection(conn net.Conn) {
 	// 6. 读取文件数量（新增）
 	fileCount, err = readUint16(reader)
 	if err != nil {
-		conn.Write([]byte(`{"error_code": 4010, "error_msg": "read file count failed"}`))
+		sendErrorResponse(conn, `{"error_code": 4010, "error_msg": "read file count failed"}`)
 		return
 	}
 	totalData = append(totalData, byte(fileCount>>8), byte(fileCount)) // 记录文件数量到总数据
@@ -147,18 +175,18 @@ func handleConnection(conn net.Conn) {
 		var fileMetaLen uint16
 		fileMetaLen, err = readUint16(reader)
 		if err != nil {
-			conn.Write([]byte(`{"error_code": 4011, "error_msg": "read file meta length failed"}`))
+			sendErrorResponse(conn, `{"error_code": 4011, "error_msg": "read file meta length failed"}`)
 			return
 		}
 		// 读取文件元数据内容
 		fileMetaBytes, err := readBytes(reader, int(fileMetaLen))
 		if err != nil {
-			conn.Write([]byte(`{"error_code": 4012, "error_msg": "read file meta failed"}`))
+			sendErrorResponse(conn, `{"error_code": 4012, "error_msg": "read file meta failed"}`)
 			return
 		}
 		var fileMeta map[string]interface{}
 		if err := json.Unmarshal(fileMetaBytes, &fileMeta); err != nil {
-			conn.Write([]byte(`{"error_code": 4013, "error_msg": "invalid file meta format"}`))
+			sendErrorResponse(conn, `{"error_code": 4013, "error_msg": "invalid file meta format"}`)
 			return
 		}
 
@@ -166,13 +194,13 @@ func handleConnection(conn net.Conn) {
 		var fileContentLen uint32
 		fileContentLen, err = readUint32(reader)
 		if err != nil {
-			conn.Write([]byte(`{"error_code": 4014, "error_msg": "read file content length failed"}`))
+			sendErrorResponse(conn, `{"error_code": 4014, "error_msg": "read file content length failed"}`)
 			return
 		}
 		// 读取文件内容
 		fileContent, err := readBytes(reader, int(fileContentLen))
 		if err != nil {
-			conn.Write([]byte(`{"error_code": 4015, "error_msg": "read file content failed"}`))
+			sendErrorResponse(conn, `{"error_code": 4015, "error_msg": "read file content failed"}`)
 			return
 		}
 
@@ -197,12 +225,13 @@ func handleConnection(conn net.Conn) {
 	// 8. 读取并验证校验和（新增）
 	checksum, err = readUint32(reader)
 	if err != nil {
-		conn.Write([]byte(`{"error_code": 4016, "error_msg": "read checksum failed"}`))
+		sendErrorResponse(conn, `{"error_code": 4016, "error_msg": "read checksum failed"}`)
 		return
 	}
 	calculatedChecksum := crc32.ChecksumIEEE(totalData)
 	if checksum != calculatedChecksum {
-		conn.Write([]byte(`{"error_code": 4017, "error_msg": "checksum verification failed"}`))
+		errorMsg := fmt.Sprintf(`{"error_code": 4017, "error_msg": "checksum verification failed, expected %#x, got %#x"}`, calculatedChecksum, checksum)
+		sendErrorResponse(conn, errorMsg)
 		return
 	}
 
@@ -226,21 +255,14 @@ func handleConnection(conn net.Conn) {
 		"error":  err,
 	})
 	if errMarshal != nil {
-		fmt.Printf("响应序列化失败: %v\n", errMarshal)
+		sendErrorResponse(conn, fmt.Sprintf(`{"error_code": 4018, "error_msg": "response serialization failed: %v"}`, errMarshal))
 		return
 	}
 
-	respHeader := make([]byte, 0)
-	respHeader = binary.BigEndian.AppendUint16(respHeader, magicNumber)
-	respHeader = append(respHeader, version)
-	respHeader = binary.BigEndian.AppendUint32(respHeader, uint32(len(response)))
-	conn.Write(append(respHeader, response...))
+	// 构造响应头
+	header := make([]byte, 0)
+	header = binary.BigEndian.AppendUint16(header, magicNumber)
+	header = append(header, version)
+	header = binary.BigEndian.AppendUint32(header, uint32(len(response)))
+	conn.Write(append(header, response...))
 }
-
-// 辅助函数（保持不变）
-// 移除以下重复的辅助函数定义：
-// func readUint16(reader *bufio.Reader) (uint16, error) { ... }
-// func readUint32(reader *bufio.Reader) (uint32, error) { ... }
-// func readBytes(reader *bufio.Reader, length int) ([]byte, error) { ... }
-
-// 直接使用 main.go 中已定义的同名函数
