@@ -1,0 +1,97 @@
+# 监控系统配置
+metrics:
+  # Prometheus监控配置
+  prometheus:
+    # 指标暴露地址
+    addr: ":9090"
+    # 指标路径
+    path: "/metrics"
+    # 采集间隔
+    scrape_interval: 15s
+    # 评估间隔
+    evaluation_interval: 15s
+
+  # 追踪配置
+  tracing:
+    # 是否启用追踪
+    enabled: true
+    # Jaeger配置
+    jaeger:
+      endpoint: "http://localhost:14268/api/traces"
+      agent_host: "localhost"
+      agent_port: 6831
+      # 采样配置
+      sampler:
+        type: "const"
+        param: 1
+      # 标签配置
+      tags:
+        environment: "development"
+
+  # 告警配置
+  alerting:
+    # 告警管理器地址
+    alertmanager_url: "http://localhost:9093"
+    # 告警规则文件
+    rules_path: "metrics/rules/alerts.yml"
+    # 告警通知配置
+    notifications:
+      # 邮件通知
+      email:
+        enabled: true
+        smtp_host: "smtp.example.com"
+        smtp_port: 587
+        from: "alerts@example.com"
+        to: ["admin@example.com"]
+      # Slack通知
+      slack:
+        enabled: true
+        webhook_url: "https://hooks.slack.com/services/xxx/yyy/zzz"
+        channel: "#alerts"
+
+  # 仪表盘配置
+  dashboard:
+    # Grafana配置
+    grafana:
+      url: "http://localhost:3000"
+      # 默认仪表盘
+      default_dashboard: "ipc-monitoring"
+      # 数据源
+      datasource: "Prometheus"
+      # 刷新间隔
+      refresh_interval: "5s"
+
+  # 健康检查配置
+  health:
+    # 检查间隔
+    check_interval: "5s"
+    # 健康分数阈值
+    thresholds:
+      critical: 60
+      warning: 80
+    # 检查项配置
+    checks:
+      # 错误率检查
+      error_rate:
+        enabled: true
+        threshold: 0.1
+      # 延迟检查
+      latency:
+        enabled: true
+        threshold: 100ms
+      # 连接池检查
+      connection_pool:
+        enabled: true
+        threshold: 0.9
+
+  # 性能分析配置
+  profiling:
+    # 是否启用
+    enabled: true
+    # 采样率
+    sample_rate: 0.1
+    # 分析数据存储
+    storage:
+      type: "file"
+      path: "/var/log/ipc/profiles"
+      retention: "7d" 

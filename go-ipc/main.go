@@ -87,8 +87,8 @@ func main() {
 	// 处理文件上传
 	http.HandleFunc("/upload", handleFileUpload)
 
-	fmt.Println("HTTP 服务启动，监听端口 8080")
-	http.ListenAndServe("0.0.0.0:80", nil)
+	fmt.Println("HTTP 服务启动，监听端口 8000")
+	http.ListenAndServe("0.0.0.0:8000", nil)
 }
 
 // 修改文件上传处理函数，使用零拷贝
