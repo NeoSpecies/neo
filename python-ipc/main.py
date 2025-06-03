@@ -35,49 +35,13 @@ def python_demo_func(params):
             "error": str(e)
         }, None
 
-def python_file_process_func(params):
-    """处理文件并返回修改后的文件信息（注：content字段为Base64编码字符串，接收方需解码）"""
-    # print(f"Python 接收到文件处理请求，参数：{params}")
-    files = params.get("files", [])
-    if not files:
-        return None, "未接收到文件数据"
 
-    try:
-        # 处理第一个文件（假设单次传一个）
-        file = files[0]
-        meta = file["meta"]
-        content_str = file["content"]  # 接收到的Base64字符串
-        
-        # 解码为原始字节（验证输入合法性）
-        content = base64.b64decode(content_str)  # 若content_str非法，此处会抛出异常
-        
-        # 保存处理后的文件
-        original_name = meta["original_name"]
-        new_name = f"processed_{original_name}"
-        os.makedirs("./processed_files", exist_ok=True)
-        with open(f"./processed_files/{new_name}", "wb") as f:
-            f.write(content)
-        # print(f"文件已保存：{new_name}")
 
-        # 重新编码为Base64字符串（标准编码，接收方需用base64.StdEncoding解码）
-        encoded_content = base64.b64encode(content).decode()
-        # print(f"返回的content（Base64字符串前50字符）：{encoded_content[:50]}")  # 关键调试日志
-        
-        return {
-            "processed_file": {
-                "new_name": new_name,
-                "mimetype": meta["mimetype"],
-                "content": encoded_content  # 明确标注为Base64字符串
-            }
-        }, None
-    except Exception as e:
-        return None, f"文件处理失败: {str(e)}"
-
-def call_go_service(method, params, files=None):
+def call_go_service(method, params):  # 移除 files 参数
     """
-    扩展支持文件传输的调用函数
+    优化后的调用函数（移除文件传输支持）
     """
-    # print(f"[DEBUG] Python 调用 Go 服务：method={method}, params={params}, files={len(files) if files else 0}")
+    # print(f"[DEBUG] Python 调用 Go 服务：method={method}, params={params}")
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         try:
             # 完整逻辑放入 try 块（包括连接、发送、接收、解析）
@@ -134,32 +98,33 @@ def call_go_service(method, params, files=None):
             total_data.write(param_len)
             total_data.write(param_data)
             # print(f"[DEBUG] 写入参数内容，长度: {len(param_data)} bytes")
-            
-            # 9. 写入文件数量（2字节，大端）
-            file_count = len(files) if files else 0
-            file_count_bytes = struct.pack(">H", file_count)
-            request.write(file_count_bytes)
-            total_data.write(file_count_bytes)
+
+            # 移除文件数量写入代码（原第9部分）
+            # file_count = len(files) if files else 0
+            # file_count_bytes = struct.pack(">H", file_count)
+            # request.write(file_count_bytes)
+            # total_data.write(file_count_bytes)
             # print(f"[DEBUG] 写入文件数量: {file_count}")
-            
-            # 10. 写入文件元数据和内容（逐个处理）
-            for file in files or []:
+
+            # 移除文件元数据和内容写入代码（原第10部分）
+            # for file in files or []:
                 # 元数据（长度2字节 + 内容）
-                meta_data = json.dumps(file["meta"], ensure_ascii=False).encode()
-                meta_len = struct.pack(">H", len(meta_data))
-                request.write(meta_len)
-                request.write(meta_data)
-                total_data.write(meta_len)
-                total_data.write(meta_data)
-                # print(f"[DEBUG] 写入文件元数据，长度: {len(meta_data)} bytes")
-                
-                # 内容（长度4字节 + 内容）
-                content = file["content"]
-                content_len = struct.pack(">I", len(content))
-                request.write(content_len)
-                request.write(content)
-                total_data.write(content_len)
-                total_data.write(content)
+            meta_data = json.dumps(file["meta"], ensure_ascii=False).encode()  # 残留代码
+
+            meta_len = struct.pack(">H", len(meta_data))
+            request.write(meta_len)
+            request.write(meta_data)
+            total_data.write(meta_len)
+            total_data.write(meta_data)
+            # print(f"[DEBUG] 写入文件元数据，长度: {len(meta_data)} bytes")
+            
+            # 内容（长度4字节 + 内容）
+            content = file["content"]
+            content_len = struct.pack(">I", len(content))
+            request.write(content_len)
+            request.write(content)
+            total_data.write(content_len)
+            total_data.write(content)
                 # print(f"[DEBUG] 写入文件内容，长度: {len(content)} bytes")
             
             # 11. 计算并写入校验和（4字节，大端）
@@ -200,7 +165,7 @@ def call_go_service(method, params, files=None):
             version = response_data[2]
             # print(f"[DEBUG] 解析版本号：实际值={version}，预期值=1")
             if version != 0x01:
-                raise Exception(f"不支持的版本号：{version}")
+                raise Exception(f"不支持的版本号：{version}")  # 确保该行缩进为4个空格（与外层if对齐）
             
             # 解析响应体长度
             body_length = struct.unpack(">I", response_data[3:7])[0]
@@ -237,7 +202,5 @@ if __name__ == "__main__":
     # 注册服务（新增关键日志）
     server.register("python.service.demo", python_demo_func)
     print("成功注册服务: python.service.demo")  # 新增日志
-    server.register("python.service.fileProcess", python_file_process_func)
-    print("成功注册服务: python.service.fileProcess")  # 新增日志
     
     server.start()

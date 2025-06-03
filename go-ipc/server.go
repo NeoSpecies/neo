@@ -77,7 +77,6 @@ func handleConnection(conn net.Conn) {
 		msgIDLen  uint16 // 消息ID长度（2字节）
 		methodLen uint16 // 方法名长度（2字节）
 		paramLen  uint32 // 参数内容长度（4字节）
-		fileCount uint16 // 文件数量（2字节，新增）
 		checksum  uint32 // 校验和（4字节，新增）
 		totalData []byte // 用于计算校验和的完整数据（新增）
 	)
@@ -160,67 +159,16 @@ func handleConnection(conn net.Conn) {
 	totalData = append(totalData, byte(paramLen))
 	totalData = append(totalData, paramData...)
 
-	// 6. 读取文件数量（新增）
-	fileCount, err = readUint16(reader)
-	if err != nil {
-		sendErrorResponse(conn, `{"error_code": 4010, "error_msg": "read file count failed"}`)
-		return
-	}
-	totalData = append(totalData, byte(fileCount>>8), byte(fileCount)) // 记录文件数量到总数据
+	// 移除文件数量读取代码（原第6部分）
+	// fileCount, err = readUint16(reader)
+	// if err != nil {
+	// 	sendErrorResponse(conn, `{"error_code": 4010, "error_msg": "read file count failed"}`)
+	// 	return
+	// }
+	// totalData = append(totalData, byte(fileCount>>8), byte(fileCount)) // 记录文件数量到总数据  （此注释未更新）
 
-	// 7. 读取文件元数据和内容（新增）
-	files := make([]map[string]interface{}, 0, fileCount)
-	for i := uint16(0); i < fileCount; i++ {
-		// 读取文件元数据长度（2字节）
-		var fileMetaLen uint16
-		fileMetaLen, err = readUint16(reader)
-		if err != nil {
-			sendErrorResponse(conn, `{"error_code": 4011, "error_msg": "read file meta length failed"}`)
-			return
-		}
-		// 读取文件元数据内容
-		fileMetaBytes, readErr := readBytes(reader, int(fileMetaLen))
-		if readErr != nil {
-			sendErrorResponse(conn, `{"error_code": 4012, "error_msg": "read file meta failed"}`)
-			return
-		}
-		var fileMeta map[string]interface{}
-		if err = json.Unmarshal(fileMetaBytes, &fileMeta); err != nil {
-			sendErrorResponse(conn, `{"error_code": 4013, "error_msg": "invalid file meta format"}`)
-			return
-		}
-
-		// 读取文件内容长度（4字节）
-		var fileContentLen uint32
-		fileContentLen, err = readUint32(reader)
-		if err != nil {
-			sendErrorResponse(conn, `{"error_code": 4014, "error_msg": "read file content length failed"}`)
-			return
-		}
-		// 读取文件内容
-		fileContent, readErr := readBytes(reader, int(fileContentLen))
-		if readErr != nil {
-			sendErrorResponse(conn, `{"error_code": 4015, "error_msg": "read file content failed"}`)
-			return
-		}
-
-		// 记录文件信息
-		files = append(files, map[string]interface{}{
-			"meta":    fileMeta,
-			"content": fileContent,
-		})
-		// 记录文件元数据和内容到总数据（用于校验和）
-		// 拆分追加操作，避免 append 参数过多问题
-		totalData = append(totalData, byte(fileMetaLen>>8))
-		totalData = append(totalData, byte(fileMetaLen))
-		totalData = append(totalData, fileMetaBytes...)
-		// 拆分追加操作，避免 append 参数过多问题
-		totalData = append(totalData, byte(fileContentLen>>24))
-		totalData = append(totalData, byte(fileContentLen>>16))
-		totalData = append(totalData, byte(fileContentLen>>8))
-		totalData = append(totalData, byte(fileContentLen))
-		totalData = append(totalData, fileContent...)
-	}
+	// 移除文件元数据和内容读取代码（原第7部分，彻底删除残留代码）
+	// （原代码中未闭合的大括号和未声明变量已完全移除）
 
 	// 8. 读取并验证校验和（新增）
 	checksum, err = readUint32(reader)
@@ -235,8 +183,8 @@ func handleConnection(conn net.Conn) {
 		return
 	}
 
-	// 9. 路由调用（补充文件参数）
-	params["files"] = files // 将文件信息注入参数供业务处理
+	// 9. 路由调用（移除文件参数注入）
+	// params["files"] = files // 已删除文件信息注入代码
 	registryLock.RLock()
 	handler, exists := serviceRegistry[method]
 	registryLock.RUnlock()
