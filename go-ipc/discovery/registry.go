@@ -9,7 +9,10 @@ import (
 	"sync"
 	"time"
 
+	"strconv" // 新增：用于端口类型转换
+
 	"github.com/google/uuid"
+	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
 // ServiceRegistry 服务注册器
@@ -20,13 +23,18 @@ type ServiceRegistry struct {
 	mutex      sync.RWMutex
 	ctx        context.Context
 	cancel     context.CancelFunc
+	// 补充缺失字段（与 service.go 对齐）
+	client     *clientv3.Client
+	serviceKey string
+	stopCh     chan struct{}
+	leaseID    clientv3.LeaseID // 新增：etcd 租约 ID
 }
 
 // RegistryConfig 注册配置
 type RegistryConfig struct {
 	Name        string            // 服务名称
 	Address     string            // 服务地址
-	Port        int              // 服务端口
+	Port        int               // 服务端口
 	Version     string            // 服务版本
 	Metadata    map[string]string // 服务元数据
 	HealthCheck bool              // 是否启用健康检查
@@ -147,8 +155,8 @@ func (r *ServiceRegistry) healthCheck() {
 
 // checkServiceAvailability 检查服务可用性
 func (r *ServiceRegistry) checkServiceAvailability() error {
-	// 尝试连接服务地址
-	address := fmt.Sprintf("%s:%d", r.service.Address, r.service.Port)
+	// 尝试连接服务地址（修正 IPv6 地址格式）
+	address := net.JoinHostPort(r.service.Address, strconv.Itoa(r.service.Port)) // 关键修改
 	conn, err := net.DialTimeout("tcp", address, time.Second)
 	if err != nil {
 		return err
@@ -162,4 +170,4 @@ func (r *ServiceRegistry) GetServiceInfo() *ServiceInfo {
 	r.mutex.RLock()
 	defer r.mutex.RUnlock()
 	return r.service
-} 
+}

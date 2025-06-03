@@ -8,7 +8,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/prometheus/client_golang/prometheus"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/jaeger"
@@ -20,18 +19,18 @@ import (
 
 // Monitor 监控管理器
 type Monitor struct {
-	metrics   *Metrics
-	qps       map[string]*QPSCollector
-	health    map[string]*HealthCalculator
-	tracer    trace.Tracer
-	mu        sync.RWMutex
-	ctx       context.Context
-	cancel    context.CancelFunc
+	metrics *Metrics
+	qps     map[string]*QPSCollector
+	health  map[string]*HealthCalculator
+	tracer  trace.Tracer
+	mu      sync.RWMutex
+	ctx     context.Context
+	cancel  context.CancelFunc
 }
 
 // MonitorConfig 监控配置
 type MonitorConfig struct {
-	ServiceName    string
+	ServiceName   string
 	MetricsAddr   string
 	JaegerURL     string
 	EnableTracing bool
@@ -105,11 +104,11 @@ func (m *Monitor) StartRequest(ctx context.Context, service, method string) (con
 	}
 
 	return ctx, &RequestMonitor{
-		monitor:  m,
-		service:  service,
-		method:   method,
-		metrics:  NewMetricsCollector(service, method),
-		span:     span,
+		monitor:   m,
+		service:   service,
+		method:    method,
+		metrics:   NewMetricsCollector(service, method),
+		span:      span,
 		startTime: time.Now(),
 	}
 }
@@ -117,7 +116,7 @@ func (m *Monitor) StartRequest(ctx context.Context, service, method string) (con
 // GetQPSCollector 获取QPS收集器
 func (m *Monitor) GetQPSCollector(service, method string) *QPSCollector {
 	key := fmt.Sprintf("%s.%s", service, method)
-	
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -133,7 +132,7 @@ func (m *Monitor) GetQPSCollector(service, method string) *QPSCollector {
 // GetHealthCalculator 获取健康度计算器
 func (m *Monitor) GetHealthCalculator(service, instance string) *HealthCalculator {
 	key := fmt.Sprintf("%s.%s", service, instance)
-	
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -226,4 +225,4 @@ func (r *RequestMonitor) RecordEvent(name string, attributes map[string]interfac
 		}
 		r.span.AddEvent(name, trace.WithAttributes(attrs...))
 	}
-} 
+}

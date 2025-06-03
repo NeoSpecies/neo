@@ -27,17 +27,17 @@ const (
 
 // MessageHeader represents the protocol header
 type MessageHeader struct {
-	Version        uint8           // Protocol version
-	Type           uint8           // Message type
+	Version         uint8           // Protocol version
+	Type            uint8           // Message type
 	CompressionType CompressionType // Compression algorithm
-	RequestID      uint64          // Unique request ID
-	PayloadSize    uint32          // Original payload size
-	CompressedSize uint32          // Compressed payload size
-	Timestamp      int64           // Message timestamp
-	Priority       uint8           // Message priority
-	Checksum       uint32          // CRC32 checksum
-	TraceID        [16]byte        // UUID for tracing
-	RetryCount     uint8           // Retry count
+	RequestID       uint64          // Unique request ID
+	PayloadSize     uint32          // Original payload size
+	CompressedSize  uint32          // Compressed payload size
+	Timestamp       int64           // Message timestamp
+	Priority        uint8           // Message priority
+	Checksum        uint32          // CRC32 checksum
+	TraceID         [16]byte        // UUID for tracing
+	RetryCount      uint8           // Retry count
 }
 
 // Message represents a complete protocol message
@@ -54,14 +54,14 @@ func NewMessage(msgType uint8, payload []byte) *Message {
 
 	msg := &Message{
 		Header: MessageHeader{
-			Version:        ProtocolVersion1,
-			Type:           msgType,
-			RequestID:      generateRequestID(),
-			PayloadSize:    uint32(len(payload)),
-			Timestamp:      time.Now().UnixNano(),
-			Priority:       0,
-			TraceID:        traceBytes,
-			RetryCount:     0,
+			Version:     ProtocolVersion1,
+			Type:        msgType,
+			RequestID:   generateRequestID(),
+			PayloadSize: uint32(len(payload)),
+			Timestamp:   time.Now().UnixNano(),
+			Priority:    0,
+			TraceID:     traceBytes,
+			RetryCount:  0,
 		},
 		Payload: payload,
 	}
@@ -93,17 +93,17 @@ func (m *Message) Encode() ([]byte, error) {
 	buffer := make([]byte, HeaderSize+len(payload))
 
 	// Encode header
-	binary.BigEndian.PutUint8(buffer[0:1], m.Header.Version)
-	binary.BigEndian.PutUint8(buffer[1:2], m.Header.Type)
-	binary.BigEndian.PutUint8(buffer[2:3], uint8(m.Header.CompressionType))
+	buffer[0] = m.Header.Version                // Version (1 byte)
+	buffer[1] = m.Header.Type                   // Type (1 byte)
+	buffer[2] = uint8(m.Header.CompressionType) //
 	binary.BigEndian.PutUint64(buffer[3:11], m.Header.RequestID)
 	binary.BigEndian.PutUint32(buffer[11:15], m.Header.PayloadSize)
 	binary.BigEndian.PutUint32(buffer[15:19], m.Header.CompressedSize)
-	binary.BigEndian.PutInt64(buffer[19:27], m.Header.Timestamp)
-	binary.BigEndian.PutUint8(buffer[27:28], m.Header.Priority)
+	binary.BigEndian.PutUint64(buffer[19:27], uint64(m.Header.Timestamp)) // Timestamp (8 bytes, 替换 PutInt64)
+	buffer[27] = m.Header.Priority
 	binary.BigEndian.PutUint32(buffer[28:32], m.Header.Checksum)
 	copy(buffer[32:48], m.Header.TraceID[:])
-	binary.BigEndian.PutUint8(buffer[48:49], m.Header.RetryCount)
+	buffer[48] = m.Header.RetryCount
 
 	// Copy payload
 	copy(buffer[HeaderSize:], payload)
@@ -119,16 +119,16 @@ func Decode(data []byte) (*Message, error) {
 
 	msg := &Message{
 		Header: MessageHeader{
-			Version:        binary.BigEndian.Uint8(data[0:1]),
-			Type:           binary.BigEndian.Uint8(data[1:2]),
-			CompressionType: CompressionType(binary.BigEndian.Uint8(data[2:3])),
-			RequestID:      binary.BigEndian.Uint64(data[3:11]),
-			PayloadSize:    binary.BigEndian.Uint32(data[11:15]),
-			CompressedSize: binary.BigEndian.Uint32(data[15:19]),
-			Timestamp:      binary.BigEndian.Int64(data[19:27]),
-			Priority:       binary.BigEndian.Uint8(data[27:28]),
-			Checksum:       binary.BigEndian.Uint32(data[28:32]),
-			RetryCount:     binary.BigEndian.Uint8(data[48:49]),
+			Version:         data[0],
+			Type:            data[1],
+			CompressionType: CompressionType(data[2]),
+			RequestID:       binary.BigEndian.Uint64(data[3:11]),
+			PayloadSize:     binary.BigEndian.Uint32(data[11:15]),
+			CompressedSize:  binary.BigEndian.Uint32(data[15:19]),
+			Timestamp:       int64(binary.BigEndian.Uint64(data[19:27])), // 替换 Uint8 为直接读取
+			Priority:        data[27],
+			Checksum:        binary.BigEndian.Uint32(data[28:32]),
+			RetryCount:      data[48],
 		},
 	}
 
@@ -162,21 +162,21 @@ func Decode(data []byte) (*Message, error) {
 func (m *Message) calculateChecksum() uint32 {
 	// Create a copy of the header with checksum field zeroed
 	headerCopy := m.Header
-	headerCopy.Checksum = 0
+	// headerCopy.Checksum = 0
 
-	// Convert header to bytes
+	// Convert header to bytes（修复：单字节直接赋值）
 	headerBytes := make([]byte, HeaderSize)
-	binary.BigEndian.PutUint8(headerBytes[0:1], headerCopy.Version)
-	binary.BigEndian.PutUint8(headerBytes[1:2], headerCopy.Type)
-	binary.BigEndian.PutUint8(headerBytes[2:3], uint8(headerCopy.CompressionType))
+	headerBytes[0] = headerCopy.Version
+	headerBytes[1] = headerCopy.Type
+	headerBytes[2] = uint8(headerCopy.CompressionType)
 	binary.BigEndian.PutUint64(headerBytes[3:11], headerCopy.RequestID)
 	binary.BigEndian.PutUint32(headerBytes[11:15], headerCopy.PayloadSize)
 	binary.BigEndian.PutUint32(headerBytes[15:19], headerCopy.CompressedSize)
-	binary.BigEndian.PutInt64(headerBytes[19:27], headerCopy.Timestamp)
-	binary.BigEndian.PutUint8(headerBytes[27:28], headerCopy.Priority)
-	binary.BigEndian.PutUint32(headerBytes[28:32], 0) // Checksum field
+	binary.BigEndian.PutUint64(headerBytes[19:27], uint64(headerCopy.Timestamp))
+	headerBytes[27] = headerCopy.Priority
+	binary.BigEndian.PutUint32(headerBytes[28:32], 0) // Checksum field (zeroed)
 	copy(headerBytes[32:48], headerCopy.TraceID[:])
-	binary.BigEndian.PutUint8(headerBytes[48:49], headerCopy.RetryCount)
+	headerBytes[48] = headerCopy.RetryCount
 
 	// Calculate checksum of header and payload
 	checksum := crc32.NewIEEE()
@@ -201,13 +201,3 @@ func (m *Message) GetTraceID() uuid.UUID {
 func (m *Message) SetCompression(typ CompressionType) {
 	m.Header.CompressionType = typ
 }
-
-// IncrementRetry increments the retry count
-func (m *Message) IncrementRetry() {
-	m.Header.RetryCount++
-}
-
-// GetRetryCount returns the current retry count
-func (m *Message) GetRetryCount() uint8 {
-	return m.Header.RetryCount
-} 

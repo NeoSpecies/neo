@@ -149,7 +149,7 @@ func handleConnection(conn net.Conn) {
 		return
 	}
 	var params map[string]interface{}
-	if err := json.Unmarshal(paramData, &params); err != nil {
+	if err = json.Unmarshal(paramData, &params); err != nil {
 		sendErrorResponse(conn, `{"error_code": 4003, "error_msg": "invalid parameter format"}`)
 		return
 	}
@@ -179,13 +179,13 @@ func handleConnection(conn net.Conn) {
 			return
 		}
 		// 读取文件元数据内容
-		fileMetaBytes, err := readBytes(reader, int(fileMetaLen))
-		if err != nil {
+		fileMetaBytes, readErr := readBytes(reader, int(fileMetaLen))
+		if readErr != nil {
 			sendErrorResponse(conn, `{"error_code": 4012, "error_msg": "read file meta failed"}`)
 			return
 		}
 		var fileMeta map[string]interface{}
-		if err := json.Unmarshal(fileMetaBytes, &fileMeta); err != nil {
+		if err = json.Unmarshal(fileMetaBytes, &fileMeta); err != nil {
 			sendErrorResponse(conn, `{"error_code": 4013, "error_msg": "invalid file meta format"}`)
 			return
 		}
@@ -198,8 +198,8 @@ func handleConnection(conn net.Conn) {
 			return
 		}
 		// 读取文件内容
-		fileContent, err := readBytes(reader, int(fileContentLen))
-		if err != nil {
+		fileContent, readErr := readBytes(reader, int(fileContentLen))
+		if readErr != nil {
 			sendErrorResponse(conn, `{"error_code": 4015, "error_msg": "read file content failed"}`)
 			return
 		}

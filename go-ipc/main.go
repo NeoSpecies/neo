@@ -92,7 +92,9 @@ func main() {
 }
 
 // 修改文件上传处理函数，使用零拷贝
+// handleFileUpload 处理文件上传
 func handleFileUpload(w http.ResponseWriter, r *http.Request) {
+	// 原第96行：首次声明 err
 	file, header, err := r.FormFile("file")
 	if err != nil {
 		http.Error(w, "文件解析失败: "+err.Error(), http.StatusBadRequest)
@@ -101,29 +103,30 @@ func handleFileUpload(w http.ResponseWriter, r *http.Request) {
 	defer file.Close()
 
 	// 创建临时文件
-	tempFile, err := os.CreateTemp("", "upload-*")
+	tempFile, err := os.CreateTemp("", "upload-*") // 复用外部 err（非重复声明）
 	if err != nil {
 		http.Error(w, "创建临时文件失败: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	// 使用 defer确保临时文件在函数结束时被关闭和删除
 	defer tempFile.Close()
 	defer os.Remove(tempFile.Name())
 
-	// 将上传的文件内容写入临时文件
-	if _, err := io.Copy(tempFile, file); err != nil {
+	// 原第114行：改为赋值操作（使用 = 而非 :=）
+	_, err = io.Copy(tempFile, file) // 复用外部 err，避免影子声明
+	if err != nil {
 		http.Error(w, "保存文件失败: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	// 重置文件指针到开始位置，以便读取内容
-	if _, err := tempFile.Seek(0, 0); err != nil {
+	// 重置文件指针到开始位置
+	_, err = tempFile.Seek(0, 0) // 复用外部 err
+	if err != nil {
 		http.Error(w, "重置文件指针失败: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	// 读取临时文件内容
-	fileBytes, err := io.ReadAll(tempFile)
+	fileBytes, err := io.ReadAll(tempFile) // 复用外部 err（首次声明 fileBytes，允许使用 :=）
 	if err != nil {
 		http.Error(w, "读取临时文件失败: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -226,14 +229,14 @@ func callPythonIpcService(method string, params map[string]interface{}) (interfa
 
 	// 检查是否需要压缩
 	if ShouldCompress(paramData) {
-		// fmt.Printf("[DEBUG] 数据需要压缩，原始大小: %d bytes\n", len(paramData))
-		compressedData, err := CompressData(paramData)
-		if err != nil {
-			// fmt.Printf("[ERROR] 压缩数据失败: %v\n", err)
-			return nil, fmt.Errorf("压缩数据失败: %v", err)
-		}
-		paramData = compressedData
-		// fmt.Printf("[DEBUG] 压缩后大小: %d bytes\n", len(paramData))
+	    // fmt.Printf("[DEBUG] 数据需要压缩，原始大小: %d bytes\n", len(paramData))
+	    compressedData, compressErr := CompressData(paramData)  // 重命名为 compressErr
+	    if compressErr != nil {
+	        // fmt.Printf("[ERROR] 压缩数据失败: %v\n", compressErr)
+	        return nil, fmt.Errorf("压缩数据失败: %v", compressErr)
+	    }
+	    paramData = compressedData
+	    // fmt.Printf("[DEBUG] 压缩后大小: %d bytes\n", len(paramData))
 	}
 
 	msgID := []byte(uuid.New().String())
@@ -242,7 +245,7 @@ func callPythonIpcService(method string, params map[string]interface{}) (interfa
 
 	// 写入协议头
 	magic := uint16(0xAEBD)
-	if err := binary.Write(request, binary.BigEndian, magic); err != nil {
+	if err = binary.Write(request, binary.BigEndian, magic); err != nil {
 		// fmt.Printf("[ERROR] 写入魔数失败: %v\n", err)
 		return nil, fmt.Errorf("写入魔数失败: %v", err)
 	}
@@ -250,46 +253,49 @@ func callPythonIpcService(method string, params map[string]interface{}) (interfa
 	// fmt.Printf("[DEBUG] 写入魔数: 0x%04X\n", magic)
 
 	version := byte(0x01)
-	if err := request.WriteByte(version); err != nil {
+	if err = request.WriteByte(version); err != nil {
 		// fmt.Printf("[ERROR] 写入版本失败: %v\n", err)
 		return nil, fmt.Errorf("写入版本失败: %v", err)
 	}
 	totalData.WriteByte(version)
 	// fmt.Printf("[DEBUG] 写入版本: %d\n", version)
 
+	// 写入消息ID
 	msgIDLen := uint16(len(msgID))
-	if err := binary.Write(request, binary.BigEndian, msgIDLen); err != nil {
+	if err = binary.Write(request, binary.BigEndian, msgIDLen); err != nil {
 		// fmt.Printf("[ERROR] 写入消息ID长度失败: %v\n", err)
 		return nil, fmt.Errorf("写入消息ID长度失败: %v", err)
 	}
-	if _, err := request.Write(msgID); err != nil {
-		// fmt.Printf("[ERROR] 写入消息ID失败: %v\n", err)
-		return nil, fmt.Errorf("写入消息ID失败: %v", err)
+	if _, writeMsgIDErr := request.Write(msgID); writeMsgIDErr != nil { // 重命名为 writeMsgIDErr
+		// fmt.Printf("[ERROR] 写入消息ID失败: %v\n", writeMsgIDErr)
+		return nil, fmt.Errorf("写入消息ID失败: %v", writeMsgIDErr)
 	}
 	binary.Write(totalData, binary.BigEndian, msgIDLen)
 	totalData.Write(msgID)
 	// fmt.Printf("[DEBUG] 写入消息ID: %s\n", string(msgID))
 
+	// 写入方法名
 	methodBytes := []byte(method)
 	methodLen := uint16(len(methodBytes))
-	if err := binary.Write(request, binary.BigEndian, methodLen); err != nil {
+	if err = binary.Write(request, binary.BigEndian, methodLen); err != nil {
 		// fmt.Printf("[ERROR] 写入方法名长度失败: %v\n", err)
 		return nil, fmt.Errorf("写入方法名长度失败: %v", err)
 	}
-	if _, err := request.Write(methodBytes); err != nil {
-		// fmt.Printf("[ERROR] 写入方法名失败: %v\n", err)
-		return nil, fmt.Errorf("写入方法名失败: %v", err)
+	if _, writeMethodErr := request.Write(methodBytes); writeMethodErr != nil { // 重命名为 writeMethodErr
+		// fmt.Printf("[ERROR] 写入方法名失败: %v\n", writeMethodErr)
+		return nil, fmt.Errorf("写入方法名失败: %v", writeMethodErr)
 	}
 	binary.Write(totalData, binary.BigEndian, methodLen)
 	totalData.Write(methodBytes)
 	// fmt.Printf("[DEBUG] 写入方法名: %s\n", method)
 
+	// 写入参数内容
 	paramLen := uint32(len(paramData))
-	if err := binary.Write(request, binary.BigEndian, paramLen); err != nil {
+	if err = binary.Write(request, binary.BigEndian, paramLen); err != nil {
 		// fmt.Printf("[ERROR] 写入参数长度失败: %v\n", err)
 		return nil, fmt.Errorf("写入参数长度失败: %v", err)
 	}
-	if _, err := request.Write(paramData); err != nil {
+	if _, writeParamErr := request.Write(paramData); writeParamErr != nil { // 重命名为 writeParamErr
 		// fmt.Printf("[ERROR] 写入参数内容失败: %v\n", err)
 		return nil, fmt.Errorf("写入参数内容失败: %v", err)
 	}
@@ -299,7 +305,7 @@ func callPythonIpcService(method string, params map[string]interface{}) (interfa
 
 	// 写入文件数量（0）
 	fileCount := uint16(0)
-	if err := binary.Write(request, binary.BigEndian, fileCount); err != nil {
+	if err = binary.Write(request, binary.BigEndian, fileCount); err != nil {
 		// fmt.Printf("[ERROR] 写入文件数量失败: %v\n", err)
 		return nil, fmt.Errorf("写入文件数量失败: %v", err)
 	}
@@ -308,16 +314,16 @@ func callPythonIpcService(method string, params map[string]interface{}) (interfa
 
 	// 计算校验和
 	checksum := crc32.ChecksumIEEE(totalData.Bytes())
-	if err := binary.Write(request, binary.BigEndian, checksum); err != nil {
+	if err = binary.Write(request, binary.BigEndian, checksum); err != nil {
 		// fmt.Printf("[ERROR] 写入校验和失败: %v\n", err)
 		return nil, fmt.Errorf("写入校验和失败: %v", err)
 	}
 	// fmt.Printf("[DEBUG] 写入校验和: 0x%08X\n", checksum)
 
 	// 发送请求
-	if _, err := conn.Write(request.Bytes()); err != nil {
-		// fmt.Printf("[ERROR] 发送请求失败: %v\n", err)
-		return nil, fmt.Errorf("发送请求失败: %v", err)
+	if _, sendErr := conn.Write(request.Bytes()); sendErr != nil { // 重命名为 sendErr
+		// fmt.Printf("[ERROR] 发送请求失败: %v\n", sendErr)
+		return nil, fmt.Errorf("发送请求失败: %v", sendErr)
 	}
 	// fmt.Printf("[DEBUG] 成功发送请求，总长度: %d bytes\n", len(request.Bytes()))
 

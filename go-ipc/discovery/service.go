@@ -6,45 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	"go.etcd.io/etcd/client/v3"
+	clientv3 "go.etcd.io/etcd/client/v3"
 )
-
-// ServiceInfo represents information about a service instance
-type ServiceInfo struct {
-	ID        string            `json:"id"`
-	Name      string            `json:"name"`
-	Address   string            `json:"address"`
-	Port      int              `json:"port"`
-	Metadata  map[string]string `json:"metadata"`
-	StartTime time.Time        `json:"start_time"`
-}
-
-// ServiceRegistry handles service registration and discovery
-type ServiceRegistry struct {
-	client     *clientv3.Client
-	leaseID    clientv3.LeaseID
-	serviceKey string
-	info       *ServiceInfo
-	stopCh     chan struct{}
-}
-
-// NewServiceRegistry creates a new service registry
-func NewServiceRegistry(endpoints []string, info *ServiceInfo) (*ServiceRegistry, error) {
-	client, err := clientv3.New(clientv3.Config{
-		Endpoints:   endpoints,
-		DialTimeout: 5 * time.Second,
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	return &ServiceRegistry{
-		client:     client,
-		serviceKey: fmt.Sprintf("/services/%s/%s", info.Name, info.ID),
-		info:       info,
-		stopCh:     make(chan struct{}),
-	}, nil
-}
 
 // Register registers the service with etcd
 func (sr *ServiceRegistry) Register(ctx context.Context) error {
@@ -55,8 +18,7 @@ func (sr *ServiceRegistry) Register(ctx context.Context) error {
 	}
 	sr.leaseID = lease.ID
 
-	// Marshal service info
-	value, err := json.Marshal(sr.info)
+	value, err := json.Marshal(sr.service)
 	if err != nil {
 		return err
 	}
@@ -135,13 +97,3 @@ func (sr *ServiceRegistry) Watch(serviceName string) clientv3.WatchChan {
 	prefix := fmt.Sprintf("/services/%s/", serviceName)
 	return sr.client.Watch(context.Background(), prefix, clientv3.WithPrefix())
 }
-
-// Deregister removes the service registration
-func (sr *ServiceRegistry) Deregister(ctx context.Context) error {
-	close(sr.stopCh)
-	_, err := sr.client.Delete(ctx, sr.serviceKey)
-	if err != nil {
-		return err
-	}
-	return sr.client.Close()
-} 
