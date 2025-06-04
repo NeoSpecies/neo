@@ -1,6 +1,7 @@
 package protocol
 
 import (
+	"bytes"
 	"encoding/binary"
 	"hash/crc32"
 	"time"
@@ -72,90 +73,31 @@ func NewMessage(msgType uint8, payload []byte) *Message {
 	return msg
 }
 
-// Encode serializes the message to bytes with optional compression
-func (m *Message) Encode() ([]byte, error) {
-	// Compress payload if compression is enabled
-	var payload []byte
-	var err error
-	if m.Header.CompressionType != CompressNone {
-		compressor := NewCompressor(m.Header.CompressionType)
-		payload, err = compressor.Compress(m.Payload)
-		if err != nil {
-			return nil, err
-		}
-		m.Header.CompressedSize = uint32(len(payload))
-	} else {
-		payload = m.Payload
-		m.Header.CompressedSize = m.Header.PayloadSize
-	}
-
-	// Allocate buffer for header and payload
-	buffer := make([]byte, HeaderSize+len(payload))
-
-	// Encode header
-	buffer[0] = m.Header.Version                // Version (1 byte)
-	buffer[1] = m.Header.Type                   // Type (1 byte)
-	buffer[2] = uint8(m.Header.CompressionType) //
-	binary.BigEndian.PutUint64(buffer[3:11], m.Header.RequestID)
-	binary.BigEndian.PutUint32(buffer[11:15], m.Header.PayloadSize)
-	binary.BigEndian.PutUint32(buffer[15:19], m.Header.CompressedSize)
-	binary.BigEndian.PutUint64(buffer[19:27], uint64(m.Header.Timestamp)) // Timestamp (8 bytes, 替换 PutInt64)
-	buffer[27] = m.Header.Priority
-	binary.BigEndian.PutUint32(buffer[28:32], m.Header.Checksum)
-	copy(buffer[32:48], m.Header.TraceID[:])
-	buffer[48] = m.Header.RetryCount
-
-	// Copy payload
-	copy(buffer[HeaderSize:], payload)
-
-	return buffer, nil
+// 定义协议头结构体（替代手动字节解析）
+type ProtocolHeader struct {
+	Magic         uint32 // 魔数（固定值）
+	Version       uint8  // 协议版本
+	MsgIDLen      uint16 // 消息ID长度
+	MethodNameLen uint16 // 方法名长度
+	ParamLen      uint32 // 参数内容长度
+	FileCount     uint8  // 文件数量（扩展字段）
+	// 预留扩展字段（如压缩标识、追踪ID）
+	CompressionAlg uint8  // 压缩算法标识（0:无，1:gzip，2:zstd）
+	TraceIDLen     uint16 // 追踪ID长度（若enable_tracing=on）
 }
 
-// Decode deserializes bytes to message with optional decompression
-func Decode(data []byte) (*Message, error) {
-	if len(data) < HeaderSize {
-		return nil, ErrInvalidMessage
-	}
+// 编码协议头（替代手动写字节）
+func EncodeHeader(header ProtocolHeader) ([]byte, error) {
+	buf := new(bytes.Buffer)
+	err := binary.Write(buf, binary.BigEndian, header) // 自动序列化结构体
+	return buf.Bytes(), err
+}
 
-	msg := &Message{
-		Header: MessageHeader{
-			Version:         data[0],
-			Type:            data[1],
-			CompressionType: CompressionType(data[2]),
-			RequestID:       binary.BigEndian.Uint64(data[3:11]),
-			PayloadSize:     binary.BigEndian.Uint32(data[11:15]),
-			CompressedSize:  binary.BigEndian.Uint32(data[15:19]),
-			Timestamp:       int64(binary.BigEndian.Uint64(data[19:27])), // 替换 Uint8 为直接读取
-			Priority:        data[27],
-			Checksum:        binary.BigEndian.Uint32(data[28:32]),
-			RetryCount:      data[48],
-		},
-	}
-
-	// Copy TraceID
-	copy(msg.Header.TraceID[:], data[32:48])
-
-	// Extract payload
-	payload := data[HeaderSize:]
-
-	// Verify checksum
-	if msg.calculateChecksum() != msg.Header.Checksum {
-		return nil, ErrChecksumMismatch
-	}
-
-	// Decompress if needed
-	if msg.Header.CompressionType != CompressNone {
-		compressor := NewCompressor(msg.Header.CompressionType)
-		decompressed, err := compressor.Decompress(payload)
-		if err != nil {
-			return nil, err
-		}
-		msg.Payload = decompressed
-	} else {
-		msg.Payload = payload
-	}
-
-	return msg, nil
+// 解码协议头（替代手动读字节）
+func DecodeHeader(data []byte) (ProtocolHeader, error) {
+	var header ProtocolHeader
+	err := binary.Read(bytes.NewReader(data), binary.BigEndian, &header) // 自动反序列化
+	return header, err
 }
 
 // calculateChecksum calculates CRC32 checksum of the message

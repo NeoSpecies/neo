@@ -106,27 +106,8 @@ def call_go_service(method, params):  # 移除 files 参数
             # total_data.write(file_count_bytes)
             # print(f"[DEBUG] 写入文件数量: {file_count}")
 
-            # 移除文件元数据和内容写入代码（原第10部分）
-            # for file in files or []:
-                # 元数据（长度2字节 + 内容）
-            meta_data = json.dumps(file["meta"], ensure_ascii=False).encode()  # 残留代码
+            # 移除文件元数据和内容写入代码（原第10部分，已完全删除残留代码）
 
-            meta_len = struct.pack(">H", len(meta_data))
-            request.write(meta_len)
-            request.write(meta_data)
-            total_data.write(meta_len)
-            total_data.write(meta_data)
-            # print(f"[DEBUG] 写入文件元数据，长度: {len(meta_data)} bytes")
-            
-            # 内容（长度4字节 + 内容）
-            content = file["content"]
-            content_len = struct.pack(">I", len(content))
-            request.write(content_len)
-            request.write(content)
-            total_data.write(content_len)
-            total_data.write(content)
-                # print(f"[DEBUG] 写入文件内容，长度: {len(content)} bytes")
-            
             # 11. 计算并写入校验和（4字节，大端）
             total_data_bytes = total_data.getvalue()
             checksum = zlib.crc32(total_data_bytes)

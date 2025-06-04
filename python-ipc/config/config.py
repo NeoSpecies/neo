@@ -30,7 +30,7 @@ class EtcdConfig:
 
 @dataclass
 class PoolConfig:
-    """连接池配置"""
+    """连接池配置（优化后）"""
     min_size: int = 5
     max_size: int = 20
     connection_timeout: float = 5.0
@@ -38,6 +38,10 @@ class PoolConfig:
     max_lifetime: float = 3600.0
     health_check_interval: float = 30.0
     balancer_strategy: str = "weighted_response_time"
+    # 新增扩缩容配置
+    scale_up_threshold: float = 0.7         # 扩容使用率阈值
+    scale_step: int = 2                     # 每次扩容步长
+    scale_down_idle_threshold: int = 2      # 缩容空闲连接阈值
 
 @dataclass
 class ProtocolConfig:
@@ -239,4 +243,4 @@ class ConfigManager:
         if self._etcd_client:
             for watch_id in self._watchers:
                 self._etcd_client.cancel_watch(watch_id)
-            self._etcd_client.close() 
+            self._etcd_client.close()

@@ -106,7 +106,44 @@ class Message:
     @property
     def priority(self) -> Priority:
         return self.header.priority
+# 定义协议头类（与Go结构体字段顺序/类型严格一致）
+class ProtocolHeader:
+    def __init__(self):
+        self.magic = 0x12345678  # 固定魔数（与Go一致）
+        self.version = 1
+        self.msg_id_len = 0
+        self.method_name_len = 0
+        self.param_len = 0
+        self.file_count = 0
+        self.compression_alg = 0  # 压缩算法标识
+        self.trace_id_len = 0     # 追踪ID长度
 
+    # 编码协议头（使用struct模块与Go对齐）
+    def encode(self):
+        # 格式字符串与Go的binary.BigEndian严格对应（I:uint32, B:uint8, H:uint16, I:uint32）
+        fmt = "!IBH H I B B H"  # 注意字段顺序与Go结构体一致
+        return struct.pack(fmt,
+            self.magic,
+            self.version,
+            self.msg_id_len,
+            self.method_name_len,
+            self.param_len,
+            self.file_count,
+            self.compression_alg,
+            self.trace_id_len
+        )
+
+    # 解码协议头（与Go反序列化逻辑一致）
+    @classmethod
+    def decode(cls, data):
+        fmt = "!IBH H I B B H"
+        unpacked = struct.unpack(fmt, data[:struct.calcsize(fmt)])
+        header = cls()
+        header.magic, header.version, header.msg_id_len, \
+        header.method_name_len, header.param_len, header.file_count, \
+        header.compression_alg, header.trace_id_len = unpacked
+        return header
+        
 class Protocol:
     """IPC协议实现"""
     

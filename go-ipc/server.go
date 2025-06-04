@@ -159,17 +159,6 @@ func handleConnection(conn net.Conn) {
 	totalData = append(totalData, byte(paramLen))
 	totalData = append(totalData, paramData...)
 
-	// 移除文件数量读取代码（原第6部分）
-	// fileCount, err = readUint16(reader)
-	// if err != nil {
-	// 	sendErrorResponse(conn, `{"error_code": 4010, "error_msg": "read file count failed"}`)
-	// 	return
-	// }
-	// totalData = append(totalData, byte(fileCount>>8), byte(fileCount)) // 记录文件数量到总数据  （此注释未更新）
-
-	// 移除文件元数据和内容读取代码（原第7部分，彻底删除残留代码）
-	// （原代码中未闭合的大括号和未声明变量已完全移除）
-
 	// 8. 读取并验证校验和（新增）
 	checksum, err = readUint32(reader)
 	if err != nil {

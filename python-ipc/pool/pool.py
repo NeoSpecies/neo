@@ -114,33 +114,36 @@ class ConnectionPool:
             time.sleep(self.health_check_interval)
 
     def _auto_scale(self):
-        """执行自动扩缩容"""
+        """执行自动扩缩容（优化后：使用配置参数）"""
         with self._lock:
             total_conns = len(self._connections)
             active_conns = len([c for c in self._connections if c.state == ConnectionState.BUSY])
             idle_conns = total_conns - active_conns
 
-            # 计算使用率
+            # 从配置获取动态阈值（需确保Config类包含对应字段）
             usage_ratio = active_conns / total_conns if total_conns > 0 else 1
+            scale_up_threshold = self.config.scale_up_threshold  # 例如默认0.7
+            scale_step = self.config.scale_step                  # 例如默认2
+            scale_down_idle_threshold = self.config.scale_down_idle_threshold  # 例如默认2
 
-            # 扩容：使用率高且未达到最大连接数
-            if usage_ratio > 0.7 and total_conns < self.max_size:
+            # 扩容逻辑：使用配置阈值
+            if usage_ratio > scale_up_threshold and total_conns < self.max_size:
                 new_conns = min(
-                    2,  # 每次最多增加2个连接
+                    scale_step,
                     self.max_size - total_conns
                 )
                 for _ in range(new_conns):
                     self._create_connection()
-                logger.info(f"扩容 {new_conns} 个连接")
+                logger.info(f"扩容 {new_conns} 个连接（阈值：{scale_up_threshold}）")
                 self._metrics.record_scaling_operation(
                     self.host, self.port, "scale_up"
                 )
 
-            # 缩容：空闲连接过多且总连接数超过最小值
-            elif idle_conns > 2 and total_conns > self.min_size:
+            # 缩容逻辑：使用配置阈值
+            elif idle_conns > scale_down_idle_threshold and total_conns > self.min_size:
                 remove_count = min(
                     idle_conns - 1,  # 保留至少1个空闲连接
-                    total_conns - self.min_size  # 不低于最小连接数
+                    total_conns - self.min_size
                 )
                 for conn in list(self._connections):
                     if remove_count <= 0:
@@ -148,7 +151,7 @@ class ConnectionPool:
                     if conn.state == ConnectionState.IDLE:
                         self._remove_connection(conn)
                         remove_count -= 1
-                logger.info(f"缩容 {remove_count} 个连接")
+                logger.info(f"缩容 {remove_count} 个连接（阈值：{scale_down_idle_threshold}）")
                 self._metrics.record_scaling_operation(
                     self.host, self.port, "scale_down"
                 )
@@ -287,4 +290,4 @@ class ConnectionPool:
             for conn in self._connections:
                 conn.close()
             self._connections.clear()
-        self._executor.shutdown(wait=True) 
+        self._executor.shutdown(wait=True)
