@@ -7,6 +7,8 @@ import socket
 import os  # 确保已导入 os（文件处理需要）
 import base64  # 将base64导入移至文件顶部，规范代码结构
 import io  # 新增：用于构造请求
+from client import IpcClient  # 新增导入语句
+
 def python_demo_func(params):
     # print(f"Python 函数接收到参数：{params}")
     
@@ -178,10 +180,47 @@ def call_go_service(method, params):  # 移除 files 参数
 
 if __name__ == "__main__":
     # 创建并启动 IPC 服务器
-    server = IpcServer(("127.0.0.1", 9091))  # 与 Go 端 callPythonIpcService 连接的地址一致
+    server = IpcServer(("127.0.0.1", 9091))
     
-    # 注册服务（新增关键日志）
+    # 注册服务
     server.register("python.service.demo", python_demo_func)
-    print("成功注册服务: python.service.demo")  # 新增日志
-    
+    print("成功注册服务: python.service.demo")
+
+    # 异步示例调用（需在服务器启动前定义）
+    def async_demo():
+        def async_callback(result, error):
+            if error:
+                print(f"Async error: {error}")
+            else:
+                print(f"Async result: {result}")
+                
+        # 创建独立客户端实例
+        demo_client = IpcClient("tcp://127.0.0.1:9090")
+        demo_client.call_async("go.service.test", {"param": "value"}, async_callback)
+
+    # 在独立线程中运行异步示例
+    import threading
+    demo_thread = threading.Thread(target=async_demo, daemon=True)
+    demo_thread.start()
+
+    # 最后启动阻塞服务
     server.start()
+    
+    def handle_response(self, response_data: bytes):
+        # ... existing parsing code ...
+        
+        # 新增回调处理逻辑
+        if response.get('callback_id'):
+            callback = self.client.async_bridge.get_callback(response['callback_id'])
+            if callback:
+                callback(response.get('result'), response.get('error'))
+                
+        # 在异步调用示例中使用
+        def async_callback(result, error):
+            if error:
+                print(f"Async error: {error}")
+            else:
+                print(f"Async result: {result}")
+                
+        # 示例调用
+        client.call_async("go.service.test", {"param": "value"}, async_callback)

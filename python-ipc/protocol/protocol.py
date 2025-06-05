@@ -117,8 +117,18 @@ class ProtocolHeader:
         self.file_count = 0
         self.compression_alg = 0  # 压缩算法标识
         self.trace_id_len = 0     # 追踪ID长度
-        self.callback_flag = 0  # 新增回调标识
-        self.callback_id_len = 0
+        self.callback_flag = 0     # 新增回调标识位
+        self.callback_id_len = 0  # 新增回调ID长度字段
+
+    def parse(self, data: bytes):
+        # 新增回调标识解析（偏移量根据实际协议结构调整）
+        self.callback_flag = data[8]
+        self.callback_id_len = struct.unpack('>H', data[9:11])[0]
+        
+class ResponseMessage:
+    def __init__(self, header: ProtocolHeader, body: dict):
+        self.callback_id = body.get('callback_id')
+        self.is_async_response = True
 
     # 编码协议头（使用struct模块与Go对齐）
     def encode(self):
