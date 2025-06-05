@@ -32,17 +32,12 @@
 3. 支持消息追踪：配置中可开启`enable_tracing`。
 4. 优化序列化性能：采用二进制协议减少序列化开销。
 
-## 3. 同步/异步模式
-框架支持两种通信模式：
-1. **同步模式**：
-   - 客户端发送请求后阻塞等待响应。
-   - 服务端处理请求并直接返回结果。
-   - 实现简单，适用于实时性要求高的场景。
-2. **异步模式**：
-   - 客户端发送请求后立即返回。
-   - 通过回调函数或轮询方式获取结果。
-   - 消息ID用于关联请求和响应。
-   - 适用于耗时操作，避免阻塞。
+## 3. 异步模式
+框架统一采用异步通信模式：
+- 客户端发送请求后立即返回。
+- 通过回调函数或轮询方式获取结果。
+- 消息ID用于关联请求和响应。
+- 适用于耗时操作，避免阻塞。
 
 ## 4. 服务发现与注册
 设计了服务注册表机制：
@@ -93,10 +88,7 @@
 // PHP客户端示例
 $client = new IpcClient('unix:///tmp/service.sock');
 
-// 同步调用
-$result = $client->call('go.service.sum', [1, 2, 3]);
-
-// 异步调用
+// 异步调用（原同步调用已移除）
 $client->callAsync('python.service.process', ['data' => 'large_data'], function($result) {
     // 处理回调结果
 });
@@ -113,10 +105,7 @@ $server->start();
 // Go客户端示例
 client := ipc.NewClient("tcp://127.0.0.1:8080")
 
-// 同步调用
-result, err := client.Call("php.service.getUser", map[string]interface{}{"id": 123})
-
-// 异步调用
+// 异步调用（原同步调用已移除）
 client.CallAsync("python.service.analyze", data, func(result interface{}, err error) {
     // 处理结果
 })
@@ -131,11 +120,38 @@ server.Start()
 ```
 
 ```python
-# Python客户端示例
+# Python客户端示例（补充异步调用）
 client = IpcClient("tcp://127.0.0.1:8080")
 
-# 同步调用
+# 异步调用（原同步调用注释已移除）
+def handle_callback(result):
+    # 处理异步结果
+    print(f"异步结果：{result}")
+
+client.call_async("go.service.process", {"data": "large_data"}, handle_callback)
 ```
+
+## 9. 异步回调机制详细设计
+
+### 9.1 核心流程
+1. 客户端调用`call_async`方法时：
+   - 生成唯一消息标识（Python用`trace_id`，Go用`RequestID`）
+   - 将回调函数与标识绑定存储到`callback_map`
+   - 立即返回标识供调用方追踪状态
+
+2. 服务端处理完成后：
+   - 构造响应消息（携带相同标识）
+   - 通过IPC通道返回客户端
+
+3. 客户端接收到响应时：
+   - 解析消息获取标识
+   - 从`callback_map`查找对应回调并执行
+   - 执行完成后从字典中删除该回调（避免内存泄漏）
+
+### 9.2 关键保障
+- **标识唯一性**：Python使用UUID生成`trace_id`，Go使用时间戳+随机数生成`RequestID`
+- **超时处理**：建议在`callback_map`中添加超时定时器（示例未展示，可后续补充）
+- **错误兼容**：响应消息类型包含`ERROR`，触发回调时传递错误信息
 
 ## 9. 扩展性设计
 - 支持插件式扩展协议处理器：暂未在代码中体现，待后续开发。
