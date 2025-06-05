@@ -33,3 +33,20 @@ class InvalidCompressionError(CompressionError):
 class MaxRetryExceededError(ProtocolError):
     """Maximum retry count exceeded"""
     pass 
+
+# 新增错误分类
+class NetworkError(ProtocolError):
+    """Network related errors"""
+    pass
+
+class BusinessError(ProtocolError):
+    """Business logic errors"""
+    pass
+
+class TimeoutError(ProtocolError):
+    """Request timeout errors"""
+    pass
+
+class CircuitBreakerOpenError(ProtocolError):
+    """Circuit breaker is open"""
+    pass

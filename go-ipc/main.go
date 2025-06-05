@@ -3,8 +3,6 @@ package main
 import (
 	"bufio"
 	"bytes"
-
-	// "encoding/base64" 移除未使用的base64导入
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -12,30 +10,119 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"sync"
 	"time"
-
-	_ "net/http/pprof" // 匿名导入pprof，它会自动注册handler到默认的http.ServeMux
 
 	"github.com/google/uuid"
 )
 
-// 全局连接池
-var connPool *ConnPool
+// 新增：异步任务状态枚举
+type AsyncTaskStatus int
 
-// 初始化连接池
-func init() {
-	connPool = NewConnPool(100, 30*time.Second) // 最大100个连接，30秒超时
+const (
+	TaskPending AsyncTaskStatus = iota
+	TaskSuccess
+	TaskFailed
+)
+
+// 新增：异步任务结构体
+type AsyncTask struct {
+	TaskID    string
+	Status    AsyncTaskStatus
+	Result    interface{}
+	Error     error
+	Callback  func(interface{}, error) // 回调函数
+	CreatedAt time.Time
 }
 
-// 注册 Go 测试函数（供 Python 调用）
+var (
+	connPool *ConnPool
+	// 新增：异步任务存储（带锁）
+	asyncTasks = struct {
+		sync.RWMutex
+		tasks map[string]*AsyncTask
+	}{tasks: make(map[string]*AsyncTask)}
+)
+
+// 初始化协程池
 func init() {
-	RegisterService("go.service.test", func(params map[string]interface{}) (interface{}, error) {
-		// fmt.Printf("Go 服务接收到参数：%+v\n", params)
-		return fmt.Sprintf("Go 测试函数返回：%v", params["input"]), nil
+	workerPool = NewWorkerPool(100)
+	connPool = NewConnPool(100, 30*time.Second)
+}
+
+// 新增：异步任务提交方法（替代原有同步调用）
+func CallAsync(method string, params map[string]interface{}, callback func(interface{}, error)) string {
+	taskID := uuid.New().String()
+	task := &AsyncTask{
+		TaskID:    taskID,
+		Status:    TaskPending,
+		Callback:  callback,
+		CreatedAt: time.Now(),
+	}
+
+	asyncTasks.Lock()
+	asyncTasks.tasks[taskID] = task
+	asyncTasks.Unlock()
+
+	workerPool.Submit(func() {
+		// 模拟耗时操作（实际应调用服务逻辑）
+		time.Sleep(2 * time.Second)
+
+		// 假设调用结果
+		result, err := callPythonIpcService(method, params)
+
+		// 更新任务状态
+		asyncTasks.Lock()
+		task.Status = TaskSuccess
+		if err != nil {
+			task.Status = TaskFailed
+			task.Error = err
+		}
+		task.Result = result
+		asyncTasks.Unlock()
+
+		// 执行回调
+		if task.Callback != nil {
+			task.Callback(result, err)
+		}
+	})
+
+	return taskID
+}
+
+// 新增：轮询任务结果接口
+func handleAsyncResult(w http.ResponseWriter, r *http.Request) {
+	var req struct{ TaskID string }
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "无效请求", 400)
+		return
+	}
+
+	asyncTasks.RLock()
+	task, exists := asyncTasks.tasks[req.TaskID]
+	asyncTasks.RUnlock()
+
+	if !exists {
+		http.Error(w, "任务不存在", 404)
+		return
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"task_id": req.TaskID,
+		"status":  task.Status,
+		"result":  task.Result,
+		"error":   task.Error,
 	})
 }
 
 func main() {
+	// 注册 Go 测试函数（供 Python 调用）
+	// 移除错误的 init 函数包裹，直接调用 RegisterService
+	RegisterService("go.service.test", func(params map[string]interface{}) (interface{}, error) {
+		// fmt.Printf("Go 服务接收到参数：%+v\n", params)
+		return fmt.Sprintf("Go 测试函数返回：%v", params["input"]), nil
+	})
+
 	// 启动 IPC 服务
 	go func() {
 		fmt.Println("正在启动 IPC 服务...")
@@ -89,6 +176,9 @@ func main() {
 	// http.HandleFunc("/upload", handleFileUpload)
 
 	fmt.Println("HTTP 服务启动，监听端口 8000")
+	// 新增：注册异步结果轮询路由
+	http.HandleFunc("/async_result", handleAsyncResult)
+
 	http.ListenAndServe("0.0.0.0:80", nil)
 }
 
@@ -137,7 +227,6 @@ func main() {
 //
 // 	// 构造 IPC 请求参数
 // 	ipcParams := map[string]interface{}{
-// 		"files": []map[string]interface{}{
 // 			{
 // 				"meta": map[string]interface{}{
 // 					"original_name": header.Filename,

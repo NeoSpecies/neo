@@ -2,12 +2,17 @@ import socket
 import json
 import threading
 import struct
-from threading import Thread
+from threading import Thread, Timer
+from concurrent.futures import ThreadPoolExecutor
+from typing import Optional, Dict, Any
 
 class IpcServer:
     def __init__(self, addr):
         self.addr = addr
         self.services = {}
+        # 新增：异步任务存储（任务ID -> 任务状态）
+        self.async_tasks: Dict[str, Dict[str, Any]] = {}
+        self.async_executor = ThreadPoolExecutor(max_workers=10)  # 异步任务执行池
 
     def register(self, name, handler):
         self.services[name] = handler
@@ -21,7 +26,38 @@ class IpcServer:
             conn, addr = self.sock.accept()
             Thread(target=self.handle_connection, args=(conn,)).start()
 
-    # 假设 server.py 中存在 handle_connection 函数，修改响应构造部分
+    # 新增：异步调用方法
+    def call_async(self, method: str, params: Dict[str, Any], callback: Optional[callable] = None) -> str:
+        task_id = str(uuid.uuid4())
+        self.async_tasks[task_id] = {
+            "status": "pending",
+            "result": None,
+            "error": None,
+            "callback": callback
+        }
+
+        def async_task():
+            try:
+                # 模拟调用服务（实际应调用具体处理逻辑）
+                result, err = self.services[method](params)
+                self.async_tasks[task_id]["status"] = "success" if not err else "failed"
+                self.async_tasks[task_id]["result"] = result
+                self.async_tasks[task_id]["error"] = err
+                if callback:
+                    callback(result, err)
+            except Exception as e:
+                self.async_tasks[task_id]["status"] = "failed"
+                self.async_tasks[task_id]["error"] = str(e)
+                if callback:
+                    callback(None, str(e))
+
+        self.async_executor.submit(async_task)
+        return task_id
+
+    # 新增：获取异步任务结果方法
+    def get_async_result(self, task_id: str) -> Dict[str, Any]:
+        return self.async_tasks.get(task_id, {"status": "not_found"})
+
     def handle_connection(self, conn):
         try:
             reader = conn.makefile('rb')
