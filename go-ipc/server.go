@@ -70,18 +70,21 @@ func sendErrorResponse(conn net.Conn, errorMsg string) {
 // 处理连接（协议解析核心）
 func handleConnection(conn net.Conn) {
 	defer conn.Close()
+
 	reader := bufio.NewReader(conn)
+
+	// 将变量声明移动到函数体内
 	var err error
-	var ( // 新增变量声明块（补充文件相关变量）
-		version   byte   // 协议版本（1字节）
-		msgIDLen  uint16 // 消息ID长度（2字节）
-		methodLen uint16 // 方法名长度（2字节）
-		paramLen  uint32 // 参数内容长度（4字节）
-		checksum  uint32 // 校验和（4字节，新增）
-		totalData []byte // 用于计算校验和的完整数据（新增）
+	var (
+		version   byte
+		msgIDLen  uint16
+		methodLen uint16
+		paramLen  uint32
+		checksum  uint32
+		totalData []byte
 	)
 
-	// 1. 读取并验证魔数
+	// 1. 读取并验证魔数（此处开始处理协议头）
 	magic, err := readUint16(reader)
 	if err != nil || magic != magicNumber {
 		// 修复：补充具体错误信息（包含实际魔数值）

@@ -76,15 +76,14 @@ func NewMessage(msgType uint8, payload []byte) *Message {
 
 // 定义协议头结构体（替代手动字节解析）
 type ProtocolHeader struct {
-	Magic         uint32 // 魔数（固定值）
-	Version       uint8  // 协议版本
-	MsgIDLen      uint16 // 消息ID长度
-	MethodNameLen uint16 // 方法名长度
-	ParamLen      uint32 // 参数内容长度
-	FileCount     uint8  // 文件数量（扩展字段）
-	// 预留扩展字段（如压缩标识、追踪ID）
-	CompressionAlg uint8  // 压缩算法标识（0:无，1:gzip，2:zstd）
-	TraceIDLen     uint16 // 追踪ID长度（若enable_tracing=on）
+	Magic         uint32 
+	Version       uint8  
+	MsgIDLen      uint16 
+	MethodNameLen uint16
+	ParamLen      uint32 
+	// 新增回调标识字段
+	CallbackFlag  uint8  // 0:无回调 1:需要回调
+	CallbackIDLen uint16 // 回调ID长度
 }
 
 // 编码协议头（替代手动写字节）

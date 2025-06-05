@@ -117,6 +117,8 @@ class ProtocolHeader:
         self.file_count = 0
         self.compression_alg = 0  # 压缩算法标识
         self.trace_id_len = 0     # 追踪ID长度
+        self.callback_flag = 0  # 新增回调标识
+        self.callback_id_len = 0
 
     # 编码协议头（使用struct模块与Go对齐）
     def encode(self):
@@ -309,4 +311,4 @@ class Protocol:
             b'',
             msg_type=MessageType.HEARTBEAT,
             priority=Priority.LOW
-        ) 
+        )
