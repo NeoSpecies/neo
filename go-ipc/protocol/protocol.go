@@ -3,6 +3,7 @@ package protocol
 import (
 	"bytes"
 	"encoding/binary"
+	"errors" // 添加 errors 包导入
 	"hash/crc32"
 	"time"
 
@@ -142,4 +143,59 @@ func (m *Message) GetTraceID() uuid.UUID {
 // SetCompression sets the compression type for the message
 func (m *Message) SetCompression(typ CompressionType) {
 	m.Header.CompressionType = typ
+}
+
+// IsHeartbeatResponse 判断是否为心跳响应消息
+func IsHeartbeatResponse(msg *Message) bool {
+    return msg.Header.Type == TypeHeartbeat
+}
+
+// UnmarshalMessage 将字节数据反序列化为Message对象
+func UnmarshalMessage(data []byte) (*Message, error) {
+    if len(data) < HeaderSize {
+        return nil, errors.New("invalid message data: too short")
+    }
+
+    msg := &Message{}
+    // 解析头部
+    msg.Header.Version = data[0]
+    msg.Header.Type = data[1]
+    msg.Header.CompressionType = CompressionType(data[2])
+    msg.Header.RequestID = binary.BigEndian.Uint64(data[3:11])
+    msg.Header.PayloadSize = binary.BigEndian.Uint32(data[11:15])
+    msg.Header.CompressedSize = binary.BigEndian.Uint32(data[15:19])
+    msg.Header.Timestamp = int64(binary.BigEndian.Uint64(data[19:27]))
+    msg.Header.Priority = data[27]
+    msg.Header.Checksum = binary.BigEndian.Uint32(data[28:32])
+    copy(msg.Header.TraceID[:], data[32:48])
+    msg.Header.RetryCount = data[48]
+
+    // 解析负载
+    if len(data) > HeaderSize {
+        msg.Payload = data[HeaderSize:]
+    }
+
+    // 校验和验证
+    if msg.calculateChecksum() != msg.Header.Checksum {
+        return nil, errors.New("checksum mismatch")
+    }
+
+    return msg, nil
+}
+
+// Bytes 返回消息的完整字节表示（头部+负载）
+func (m *Message) Bytes() []byte {
+    headerBytes := make([]byte, HeaderSize)
+    headerBytes[0] = m.Header.Version
+    headerBytes[1] = m.Header.Type
+    headerBytes[2] = uint8(m.Header.CompressionType)
+    binary.BigEndian.PutUint64(headerBytes[3:11], m.Header.RequestID)
+    binary.BigEndian.PutUint32(headerBytes[11:15], m.Header.PayloadSize)
+    binary.BigEndian.PutUint32(headerBytes[15:19], m.Header.CompressedSize)
+    binary.BigEndian.PutUint64(headerBytes[19:27], uint64(m.Header.Timestamp))
+    headerBytes[27] = m.Header.Priority
+    binary.BigEndian.PutUint32(headerBytes[28:32], m.Header.Checksum)
+    copy(headerBytes[32:48], m.Header.TraceID[:])
+    headerBytes[48] = m.Header.RetryCount
+    return append(headerBytes, m.Payload...)
 }

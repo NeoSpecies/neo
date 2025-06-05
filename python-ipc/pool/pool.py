@@ -291,3 +291,78 @@ class ConnectionPool:
                 conn.close()
             self._connections.clear()
         self._executor.shutdown(wait=True)
+
+
+class ConnectionPool:
+    def __init__(self, min_size, max_size):
+        self.min_size = min_size
+        self.max_size = max_size
+        self.idle_conns = []  # 空闲连接列表
+        self.active_conns = 0  # 活跃连接数
+        self.waiting_queue = 0  # 等待队列长度
+        self.avg_rtt = 100  # 平均响应时间（ms，滑动平均）
+        self.max_util = 0.0  # 最大连接利用率
+
+    def start_auto_manager(self, interval=30):
+        """启动自动管理循环（需在初始化时调用）"""
+        def manager_loop():
+            while True:
+                time.sleep(interval)
+                self._maybe_resize()
+    
+        threading.Thread(target=manager_loop, daemon=True).start()
+    
+    def _maybe_resize(self):
+        """动态扩缩容核心逻辑"""
+        total_conns = len(self.idle_conns) + self.active_conns
+    
+        # 扩容逻辑（连接池未满且负载高）
+        if total_conns < self.max_size and self.waiting_queue > 0 and self.max_util > 0.8:
+            need_add = min(int(total_conns * 0.2), self.max_size - total_conns)
+            for _ in range(need_add):
+                try:
+                    conn = Connection()  # 假设Connection是连接对象
+                    self.idle_conns.append(conn)
+                except ConnectionError:
+                    continue
+    
+        # 缩容逻辑（连接池非最小且负载低）
+        if total_conns > self.min_size and self.active_conns < self.min_size and self.avg_rtt < 50:
+            need_remove = min(int(total_conns * 0.1), total_conns - self.min_size)
+            for _ in range(need_remove):
+                if self.idle_conns:
+                    conn = self.idle_conns.pop(0)
+                    conn.close()
+
+    def health_check(self):
+        """执行健康检查（需定时调用）"""
+        to_remove = []
+        for idx, conn in enumerate(self.idle_conns):
+            # 发送心跳包（使用协议定义的HEARTBEAT类型）
+            heartbeat = protocol.Message(
+                header=protocol.MessageHeader(
+                    msg_type=protocol.MessageType.HEARTBEAT,
+                    timestamp=int(time.time() * 1000)
+                ),
+                payload=b"ping"
+            )
+            send_time = time.time()
+    
+            # 发送并等待响应（超时500ms）
+            try:
+                conn.send(heartbeat)
+                resp = conn.receive(timeout=0.5)
+                if resp.header.msg_type != protocol.MessageType.HEARTBEAT:
+                    raise ProtocolError("心跳响应类型错误")
+            except (ConnectionError, ProtocolError):
+                to_remove.append(idx)
+                continue
+    
+            # 计算响应时间（滑动平均）
+            rtt = (time.time() - send_time) * 1000  # 转换为毫秒
+            self.avg_rtt = (self.avg_rtt * 9 + rtt) / 10
+    
+        # 移除异常连接（从后往前删除避免索引错位）
+        for idx in reversed(to_remove):
+            conn = self.idle_conns.pop(idx)
+            conn.close()

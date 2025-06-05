@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"go-ipc/protocol"
 	"log" // 新增log包导入
 	"net"
 	"sync"
@@ -240,64 +241,22 @@ func (p *ConnectionPool) Close() error {
 	return nil
 }
 
-// maintain 维护连接池（优化后：使用配置参数）
+// maintain 维护连接池（自动扩缩容、健康检查等）
 func (p *ConnectionPool) maintain() {
-	ticker := time.NewTicker(5 * time.Second)
+	ticker := time.NewTicker(p.config.HealthCheckInterval)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ticker.C:
-			p.mu.Lock()
-			totalConns := len(p.connections)
-			activeConns := int(p.metrics.activeConnections)
-			idleConns := totalConns - activeConns
-
-			usageRatio := float64(activeConns) / float64(totalConns)
-			scaleUpThreshold := p.config.ScaleUpThreshold
-			scaleStep := p.config.ScaleStep
-			scaleDownIdleThreshold := p.config.ScaleDownThreshold // 原float64类型
-
-			// 扩容逻辑（修复log未定义）
-			if usageRatio > scaleUpThreshold && totalConns < p.config.MaxSize {
-				newConns := min(
-					scaleStep,
-					p.config.MaxSize-totalConns,
-				)
-				for i := 0; i < newConns; i++ {
-					conn, err := p.createConnection()
-					if err == nil {
-						p.connections = append(p.connections, conn)
-						p.metrics.totalConnections++
-					}
-				}
-				log.Printf("扩容 %d 个连接（阈值：%.2f）", newConns, scaleUpThreshold) // 已导入log包
+			// 执行健康检查（当配置启用时）
+			if p.config.HealthCheck {
+				p.performHealthCheck()
 			}
-
-			// 缩容逻辑（修复类型不匹配）
-			if idleConns > int(scaleDownIdleThreshold) && totalConns > p.config.MinSize { // 转换为int比较
-				removeCount := min(
-					idleConns-1,
-					totalConns-p.config.MinSize,
-				)
-				for i := 0; i < removeCount; i++ {
-					if len(p.connections) == 0 {
-						break
-					}
-					for j, conn := range p.connections {
-						if !conn.inUse {
-							conn.conn.Close()
-							p.connections = append(p.connections[:j], p.connections[j+1:]...)
-							p.metrics.totalConnections--
-							removeCount--
-							break
-						}
-					}
-				}
-				log.Printf("缩容 %d 个连接（阈值：%d）", removeCount, int(scaleDownIdleThreshold)) // 已导入log包
+			// 清理空闲连接（当配置启用自动扩缩容时）
+			if p.config.AutoScaling {
+				p.cleanIdleConnections()
 			}
-
-			p.mu.Unlock()
 		case <-p.done:
 			return
 		}
@@ -497,4 +456,108 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// 连接池核心结构体（扩展负载监控字段）
+type ConnPool struct {
+	sync.Mutex
+	minSize      int                      // 最小连接数（配置项）
+	maxSize      int                      // 最大连接数（配置项）
+	idleConns    []*Connection            // 空闲连接
+	activeConns  int                      // 活跃连接数（正在处理请求的连接）
+	waitingQueue int                      // 等待获取连接的请求数
+	avgRTT       time.Duration            // 最近1分钟平均响应时间（毫秒）
+	maxUtil      float64                  // 最近5分钟最大连接利用率（activeConns/totalConns）
+	config       Config                   // 新增：连接池配置
+	factory      func() (net.Conn, error) // 新增：连接工厂函数
+}
+
+// 启动连接池自动管理循环（在NewConnPool初始化时调用）
+func (p *ConnPool) StartAutoManager(interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	go func() {
+		for range ticker.C {
+			p.maybeResize()
+		}
+	}()
+}
+
+// 动态扩缩容核心逻辑（修复NewConnection未定义）
+func (p *ConnPool) maybeResize() {
+	p.Lock()
+	defer p.Unlock()
+
+	totalConns := len(p.idleConns) + p.activeConns
+
+	// 扩容逻辑（连接池未满且负载高）
+	if totalConns < p.maxSize && p.waitingQueue > 0 && p.maxUtil > 0.8 {
+		needAdd := min((totalConns * 20 / 100), p.maxSize-totalConns)
+		for i := 0; i < needAdd; i++ {
+			conn, err := p.factory() // 使用工厂函数创建底层连接
+			if err == nil {
+				// 包装为Connection对象
+				wrappedConn := &Connection{
+					conn:      conn,
+					pool:      nil, // 需关联正确的连接池实例
+					Stats:     NewConnectionStats(),
+					lastCheck: time.Now(),
+				}
+				p.idleConns = append(p.idleConns, wrappedConn) // 改为添加*Connection
+			}
+		}
+	}
+
+	// 缩容逻辑（连接池非最小且负载低）
+	if totalConns > p.minSize && p.activeConns < p.minSize && p.avgRTT < 50*time.Millisecond {
+		needRemove := min((totalConns * 10 / 100), totalConns-p.minSize)
+		for i := 0; i < needRemove; i++ {
+			if len(p.idleConns) > 0 {
+				conn := p.idleConns[0]
+				p.idleConns = p.idleConns[1:]
+				conn.conn.Close() // 改为调用底层net.Conn的Close方法
+			}
+		}
+	}
+}
+
+func (p *ConnPool) HealthCheck() {
+    p.Lock()
+    defer p.Unlock()
+
+    for i, conn := range p.idleConns {
+        // 发送心跳包（使用协议定义的HEARTBEAT类型）
+        heartbeat := protocol.NewMessage(protocol.TypeHeartbeat, []byte("ping")) // 使用NewMessage生成带校验和的消息
+        sendTime := time.Now()
+
+        // 发送并等待响应（使用Bytes方法获取字节数据）
+        if _, err := conn.conn.Write(heartbeat.Bytes()); err != nil { 
+            p.removeConn(i)
+            continue
+        }
+
+        buf := make([]byte, 1024)
+        n, err := conn.conn.Read(buf)
+        if err != nil {
+            p.removeConn(i)
+            continue
+        }
+
+        // 反序列化为Message对象后验证
+        receivedMsg, err := protocol.UnmarshalMessage(buf[:n])
+        if err != nil || !protocol.IsHeartbeatResponse(receivedMsg) { 
+            p.removeConn(i)
+            continue
+        }
+
+        // 记录响应时间（使用LatencyStats）
+        rtt := time.Since(sendTime)
+        conn.Stats.LatencyStats.Add(rtt)
+    }
+}
+
+// 辅助函数：移除连接并关闭
+func (p *ConnPool) removeConn(index int) {
+	conn := p.idleConns[index]
+	conn.conn.Close() // 改为调用底层net.Conn的Close方法
+	p.idleConns = append(p.idleConns[:index], p.idleConns[index+1:]...)
 }

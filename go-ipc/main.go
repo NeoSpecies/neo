@@ -89,7 +89,7 @@ func main() {
 	// http.HandleFunc("/upload", handleFileUpload)
 
 	fmt.Println("HTTP 服务启动，监听端口 8000")
-	http.ListenAndServe("0.0.0.0:8000", nil)
+	http.ListenAndServe("0.0.0.0:80", nil)
 }
 
 // 移除 handleFileUpload 函数完整定义
