@@ -6,6 +6,8 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"go-ipc/config"
+	"go-ipc/config/loader"
 	"hash/crc32"
 	"io"
 	"net/http"
@@ -174,12 +176,28 @@ func main() {
 
 	// 移除文件上传路由
 	// http.HandleFunc("/upload", handleFileUpload)
+	var cfg config.Config
+	if err := loader.LoadFromFile("config/default.yml", &cfg); err != nil {
+		fmt.Printf("加载配置文件失败: %v\n", err)
+		os.Exit(1)
+	}
+	// 添加调试信息
 
-	fmt.Println("HTTP 服务启动，监听端口 8000")
-	// 新增：注册异步结果轮询路由
+	var globalCfg config.GlobalConfig
+	globalCfg.Server = cfg.Server
+	// 添加调试信息
+
+	config.Update(globalCfg)
+	// 获取服务端配置
+	serverCfg := config.Get().Server
+	// fmt.Printf("Server config details: %+v\n", serverCfg)
+
+	fmt.Printf("HTTP 服务启动，监听地址 %s:%d\n", serverCfg.Host, serverCfg.Port)
+	// 注册异步结果轮询路由
 	http.HandleFunc("/async_result", handleAsyncResult)
 
-	http.ListenAndServe("0.0.0.0:80", nil)
+	// 使用配置中的地址和端口
+	http.ListenAndServe(fmt.Sprintf("%s:%d", serverCfg.Host, serverCfg.Port), nil)
 }
 
 // 移除 handleFileUpload 函数完整定义
