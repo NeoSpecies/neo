@@ -118,19 +118,33 @@ func handleAsyncResult(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
+	// 加载配置文件（提升到main函数顶部，避免重复加载）
+	var cfg config.Config
+	if err := loader.LoadFromFile("config/default.yml", &cfg); err != nil {
+		fmt.Printf("加载配置文件失败: %v\n", err)
+		os.Exit(1)
+	}
+
+	// 初始化全局配置（修正：完整赋值IPC和HTTP配置）
+	var globalCfg config.GlobalConfig
+	globalCfg.IPC = cfg.IPC   // 从config.Config获取IPC配置
+	globalCfg.HTTP = cfg.HTTP // 从config.Config获取HTTP配置
+	config.Update(globalCfg)
+	serverCfg := config.Get().HTTP // HTTP服务配置
+
 	// 注册 Go 测试函数（供 Python 调用）
-	// 移除错误的 init 函数包裹，直接调用 RegisterService
 	RegisterService("go.service.test", func(params map[string]interface{}) (interface{}, error) {
-		// fmt.Printf("Go 服务接收到参数：%+v\n", params)
 		return fmt.Sprintf("Go 测试函数返回：%v", params["input"]), nil
 	})
 
-	// 启动 IPC 服务
+	// 启动 IPC 服务（修正：使用IPC配置参数）
 	go func() {
 		fmt.Println("正在启动 IPC 服务...")
-		if err := StartIpcServer("127.0.0.1:9090"); err != nil {
+		ipcCfg := config.Get().IPC                                // 获取IPC配置
+		ipcAddr := fmt.Sprintf("%s:%d", ipcCfg.Host, ipcCfg.Port) // 使用IPC配置中的host和port
+		if err := StartIpcServer(ipcAddr); err != nil {
 			fmt.Printf("IPC 服务启动失败: %v\n", err)
-			os.Exit(1) // 如果 IPC 服务启动失败，整个程序退出
+			os.Exit(1)
 		}
 	}()
 
@@ -176,21 +190,6 @@ func main() {
 
 	// 移除文件上传路由
 	// http.HandleFunc("/upload", handleFileUpload)
-	var cfg config.Config
-	if err := loader.LoadFromFile("config/default.yml", &cfg); err != nil {
-		fmt.Printf("加载配置文件失败: %v\n", err)
-		os.Exit(1)
-	}
-	// 添加调试信息
-
-	var globalCfg config.GlobalConfig
-	globalCfg.Server = cfg.Server
-	// 添加调试信息
-
-	config.Update(globalCfg)
-	// 获取服务端配置
-	serverCfg := config.Get().Server
-	// fmt.Printf("Server config details: %+v\n", serverCfg)
 
 	fmt.Printf("HTTP 服务启动，监听地址 %s:%d\n", serverCfg.Host, serverCfg.Port)
 	// 注册异步结果轮询路由

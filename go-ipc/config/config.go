@@ -14,7 +14,8 @@ type GlobalConfig struct {
 	Protocol  ProtocolConfig
 	Metrics   MetricsConfig
 	Pool      PoolConfig
-	Server    ServerConfig
+	IPC       IPCConfig  // 新增IPC专用配置
+	HTTP      HTTPConfig // 新增HTTP专用配置
 }
 
 // DiscoveryConfig 服务发现配置
@@ -45,13 +46,10 @@ type PoolConfig struct {
 	IdleTimeout int `yaml:"idle_timeout"`
 }
 
-type ServerConfig struct {
-	Host string `yaml:"Host"`
-	Port int `yaml:"Port"`
-}
-
+// 合并重复的Config结构体，匹配default.yml的配置结构
 type Config struct {
-    Server ServerConfig `yaml:"Server"`
+	IPC  IPCConfig  `yaml:"ipc"`  // 对应default.yml的ipc节点
+	HTTP HTTPConfig `yaml:"http"` // 对应default.yml的http节点
 }
 
 // 新增原子操作接口
@@ -70,4 +68,20 @@ func GetDiscoveryConfig() DiscoveryConfig {
 	configLock.RLock()
 	defer configLock.RUnlock()
 	return Get().Discovery
+}
+
+// IPC配置
+type IPCConfig struct {
+	Host           string `yaml:"host"`
+	Port           int    `yaml:"port"`
+	MaxConnections int    `yaml:"max_connections"`
+}
+
+// HTTP配置
+type HTTPConfig struct {
+	Host        string `yaml:"host"`
+	Port        int    `yaml:"port"`
+	EnableHTTPS bool   `yaml:"enable_https"`
+	CertFile    string `yaml:"cert_file"`
+	KeyFile     string `yaml:"key_file"`
 }

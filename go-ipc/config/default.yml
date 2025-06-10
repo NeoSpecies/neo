@@ -1,3 +1,11 @@
-Server:
-  Host: "0.0.0.0"
-  Port: 8000
+ipc:
+  host: 127.0.0.1
+  port: 9090
+  max_connections: 1000
+
+http:
+  host: 0.0.0.0
+  port: 80
+  enable_https: false
+  cert_file: ""
+  key_file: ""
