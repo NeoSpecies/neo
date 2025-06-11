@@ -5,7 +5,13 @@ ipc:
 
 http:
   host: 0.0.0.0
-  port: 80
+  port: 8000
   enable_https: false
   cert_file: ""
   key_file: ""
+
+# 新增连接池配置
+pool:
+  min_size: 5
+  max_size: 20
+  idle_timeout: 60

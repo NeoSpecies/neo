@@ -9,6 +9,7 @@ import (
 	"net"
 	"sync"
 	"time"
+	"go-ipc/config"
 )
 
 var (
@@ -90,7 +91,15 @@ type ConnectionPool struct {
 }
 
 // NewConnectionPool 创建连接池
-func NewConnectionPool(config Config, factory func() (net.Conn, error)) (*ConnectionPool, error) {
+func NewConnectionPool(factory func() (net.Conn, error)) (*ConnectionPool, error) {
+	cfg := config.Get().Pool
+	config := Config{
+		MaxSize:        cfg.MaxSize,
+		MinSize:        cfg.MinSize,
+		IdleTimeout:    time.Duration(cfg.IdleTimeout) * time.Second,
+		// 其他配置项根据需要设置
+	}
+
 	if err := validateConfig(config); err != nil {
 		return nil, err
 	}

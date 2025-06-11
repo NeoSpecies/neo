@@ -49,7 +49,7 @@ var (
 // 初始化协程池
 func init() {
 	workerPool = NewWorkerPool(100)
-	connPool = NewConnPool(100, 30*time.Second)
+	// 移除连接池初始化逻辑
 }
 
 // 新增：异步任务提交方法（替代原有同步调用）
@@ -119,7 +119,7 @@ func handleAsyncResult(w http.ResponseWriter, r *http.Request) {
 
 func main() {
 	// 加载配置文件（提升到main函数顶部，避免重复加载）
-	var cfg config.Config
+	var cfg config.GlobalConfig
 	if err := loader.LoadFromFile("config/default.yml", &cfg); err != nil {
 		fmt.Printf("加载配置文件失败: %v\n", err)
 		os.Exit(1)
@@ -130,6 +130,10 @@ func main() {
 	globalCfg.IPC = cfg.IPC   // 从config.Config获取IPC配置
 	globalCfg.HTTP = cfg.HTTP // 从config.Config获取HTTP配置
 	config.Update(globalCfg)
+
+	// 在配置加载完成后初始化连接池
+	connPool = NewConnPool()
+
 	serverCfg := config.Get().HTTP // HTTP服务配置
 
 	// 注册 Go 测试函数（供 Python 调用）
@@ -198,119 +202,6 @@ func main() {
 	// 使用配置中的地址和端口
 	http.ListenAndServe(fmt.Sprintf("%s:%d", serverCfg.Host, serverCfg.Port), nil)
 }
-
-// 移除 handleFileUpload 函数完整定义
-// func handleFileUpload(w http.ResponseWriter, r *http.Request) {
-// 	// 原第96行：首次声明 err
-// 	file, header, err := r.FormFile("file")
-// 	if err != nil {
-// 		http.Error(w, "文件解析失败: "+err.Error(), http.StatusBadRequest)
-// 		return
-// 	}
-// 	defer file.Close()
-//
-// 	// 创建临时文件
-// 	tempFile, err := os.CreateTemp("", "upload-*") // 复用外部 err（非重复声明）
-// 	if err != nil {
-// 		http.Error(w, "创建临时文件失败: "+err.Error(), http.StatusInternalServerError)
-// 		return
-// 	}
-// 	defer tempFile.Close()
-// 	defer os.Remove(tempFile.Name())
-//
-// 	// 原第114行：改为赋值操作（使用 = 而非 :=）
-// 	_, err = io.Copy(tempFile, file) // 复用外部 err，避免影子声明
-// 	if err != nil {
-// 		http.Error(w, "保存文件失败: "+err.Error(), http.StatusInternalServerError)
-// 		return
-// 	}
-//
-// 	// 重置文件指针到开始位置
-// 	_, err = tempFile.Seek(0, 0) // 复用外部 err
-// 	if err != nil {
-// 		http.Error(w, "重置文件指针失败: "+err.Error(), http.StatusInternalServerError)
-// 		return
-// 	}
-//
-// 	// 读取临时文件内容
-// 	fileBytes, err := io.ReadAll(tempFile) // 复用外部 err（首次声明 fileBytes，允许使用 :=）
-// 	if err != nil {
-// 		http.Error(w, "读取临时文件失败: "+err.Error(), http.StatusInternalServerError)
-// 		return
-// 	}
-//
-// 	// 将文件内容进行 Base64 编码
-// 	encodedContent := base64.StdEncoding.EncodeToString(fileBytes)
-//
-// 	// 构造 IPC 请求参数
-// 	ipcParams := map[string]interface{}{
-// 			{
-// 				"meta": map[string]interface{}{
-// 					"original_name": header.Filename,
-// 					"mimetype":      header.Header.Get("Content-Type"),
-// 				},
-// 				"content": encodedContent, // 传递 Base64 编码后的字符串
-// 			},
-// 		},
-// 	}
-//
-// 	// 通过 IPC 调用 Python 服务处理文件
-// 	pythonResult, err := callPythonIpcService("python.service.fileProcess", ipcParams)
-// 	if err != nil {
-// 		http.Error(w, "IPC 调用失败: "+err.Error(), http.StatusInternalServerError)
-// 		return
-// 	}
-//
-// 	if pythonResult == nil {
-// 		http.Error(w, "Python 服务返回空结果", http.StatusInternalServerError)
-// 		return
-// 	}
-//
-// 	resultMap, ok := pythonResult.(map[string]interface{})
-// 	if !ok {
-// 		http.Error(w, "Python 响应类型错误，非预期的 map 类型", http.StatusInternalServerError)
-// 		return
-// 	}
-//
-// 	processedFileVal := resultMap["processed_file"]
-// 	if processedFileVal == nil {
-// 		http.Error(w, "Python 响应中未包含 processed_file", http.StatusInternalServerError)
-// 		return
-// 	}
-//
-// 	processedFile, ok := processedFileVal.(map[string]interface{})
-// 	if !ok {
-// 		http.Error(w, "Python 响应中 processed_file 非预期的 map 类型", http.StatusInternalServerError)
-// 		return
-// 	}
-//
-// 	contentStr, ok := processedFile["content"].(string)
-// 	if !ok {
-// 		http.Error(w, "Python 响应中 content 非预期的字符串类型", http.StatusInternalServerError)
-// 		return
-// 	}
-//
-// 	fileContent, err := base64.StdEncoding.DecodeString(contentStr)
-// 	if err != nil {
-// 		http.Error(w, fmt.Sprintf("Base64 解码失败: %v", err), http.StatusInternalServerError)
-// 		return
-// 	}
-//
-// 	mimetype, ok := processedFile["mimetype"].(string)
-// 	if !ok {
-// 		http.Error(w, "Python 响应中 mimetype 非预期的字符串", http.StatusInternalServerError)
-// 		return
-// 	}
-// 	newName, ok := processedFile["new_name"].(string)
-// 	if !ok {
-// 		http.Error(w, "Python 响应中 new_name 非预期的字符串", http.StatusInternalServerError)
-// 		return
-// 	}
-//
-// 	w.Header().Set("Content-Type", mimetype)
-// 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", newName))
-// 	w.Write(fileContent)
-// }
 
 // 修改IPC调用函数，使用连接池和压缩
 func callPythonIpcService(method string, params map[string]interface{}) (interface{}, error) {

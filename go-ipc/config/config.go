@@ -47,10 +47,10 @@ type PoolConfig struct {
 }
 
 // 合并重复的Config结构体，匹配default.yml的配置结构
-type Config struct {
-	IPC  IPCConfig  `yaml:"ipc"`  // 对应default.yml的ipc节点
-	HTTP HTTPConfig `yaml:"http"` // 对应default.yml的http节点
-}
+// type Config struct {
+// 	IPC  IPCConfig  `yaml:"ipc"`  // 对应default.yml的ipc节点
+// 	HTTP HTTPConfig `yaml:"http"` // 对应default.yml的http节点
+// }
 
 // 新增原子操作接口
 func Get() GlobalConfig {

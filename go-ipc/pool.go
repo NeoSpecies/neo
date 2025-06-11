@@ -4,6 +4,7 @@ import (
 	"net"
 	"sync"
 	"time"
+    "go-ipc/config"
 )
 
 // WorkerPool 协程池实现
@@ -56,12 +57,13 @@ type ConnPool struct {
 }
 
 // NewConnPool 创建新的连接池
-func NewConnPool(maxConns int, timeout time.Duration) *ConnPool {
-	return &ConnPool{
-		conns:    make(map[string][]net.Conn),
-		maxConns: maxConns,
-		timeout:  timeout,
-	}
+func NewConnPool() *ConnPool {
+    cfg := config.Get().Pool
+    return &ConnPool{
+        conns:    make(map[string][]net.Conn),
+        maxConns: cfg.MaxSize,
+        timeout:  time.Duration(cfg.IdleTimeout) * time.Second,
+    }
 }
 
 // Get 从连接池获取连接
