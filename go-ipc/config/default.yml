@@ -15,3 +15,21 @@ pool:
   min_size: 5
   max_size: 20
   idle_timeout: 60
+
+# 新增服务发现配置
+ discovery:
+  etcd_endpoints:
+    - "http://127.0.0.1:2379"
+  service_prefix: "/services"
+  refresh_interval: "30s"
+
+# 新增协议配置
+ protocol:
+  compression_type: "gzip"
+  max_message_size: 1048576
+  checksum_enabled: true
+
+# 新增指标配置
+ metrics:
+  enable_prometheus: true
+  prometheus_port: 9091

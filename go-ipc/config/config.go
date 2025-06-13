@@ -32,8 +32,6 @@ type ProtocolConfig struct {
 	ChecksumEnabled bool   `yaml:"checksum_enabled"`
 }
 
-// 其他模块配置结构...
-
 // 添加缺失的结构体定义
 type MetricsConfig struct {
 	EnablePrometheus bool `yaml:"enable_prometheus"`
@@ -45,12 +43,6 @@ type PoolConfig struct {
 	MaxSize     int `yaml:"max_size"`
 	IdleTimeout int `yaml:"idle_timeout"`
 }
-
-// 合并重复的Config结构体，匹配default.yml的配置结构
-// type Config struct {
-// 	IPC  IPCConfig  `yaml:"ipc"`  // 对应default.yml的ipc节点
-// 	HTTP HTTPConfig `yaml:"http"` // 对应default.yml的http节点
-// }
 
 // 新增原子操作接口
 func Get() GlobalConfig {
