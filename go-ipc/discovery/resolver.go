@@ -6,21 +6,9 @@ import (
 	"sync"
 	"time"
 
-	"encoding/json"
+	"go-ipc/config"
 	"go-ipc/pool"
-	"net"
 )
-
-// ServiceResolver 服务解析器
-type ServiceResolver struct {
-	discovery *ServiceDiscovery
-	name      string
-	balancer  pool.Balancer
-	services  map[string]*ServiceInfo
-	mutex     sync.RWMutex
-	ctx       context.Context
-	cancel    context.CancelFunc
-}
 
 // ResolverConfig 解析器配置
 type ResolverConfig struct {
@@ -33,14 +21,33 @@ type ResolverConfig struct {
 // FilterFunc 服务过滤函数
 type FilterFunc func(*ServiceInfo) bool
 
+// ServiceResolver 服务解析器
+type ServiceResolver struct {
+	discovery *ServiceDiscovery
+	name      string
+	balancer  pool.Balancer
+	services  map[string]*ServiceInfo
+	mutex     sync.RWMutex
+	ctx       context.Context
+	cancel    context.CancelFunc
+}
+
 // NewServiceResolver 创建服务解析器
-func NewServiceResolver(discovery *ServiceDiscovery, config ResolverConfig) (*ServiceResolver, error) {
+func NewServiceResolver(resolverConfig ResolverConfig) (*ServiceResolver, error) {
+	sd := GetInstance()
+
+	// 从全局配置获取刷新间隔
+	cfg := config.GetDiscoveryConfig()
+	if resolverConfig.RefreshInterval == 0 {
+		resolverConfig.RefreshInterval = time.Duration(cfg.RefreshInterval) * time.Second
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 
 	resolver := &ServiceResolver{
-		discovery: discovery,
-		name:      config.Name,
-		balancer:  pool.NewBalancer(config.LoadBalance),
+		discovery: sd,
+		name:      resolverConfig.Name,
+		balancer:  pool.NewBalancer(resolverConfig.LoadBalance),
 		services:  make(map[string]*ServiceInfo),
 		ctx:       ctx,
 		cancel:    cancel,
@@ -52,19 +59,14 @@ func NewServiceResolver(discovery *ServiceDiscovery, config ResolverConfig) (*Se
 		return nil, err
 	}
 
-	// 监听服务变更
-	updateCh, err := discovery.Watch(config.Name)
-	if err != nil {
-		cancel()
-		return nil, err
-	}
-
-	// 处理服务更新
-	go resolver.watchUpdates(updateCh, config.FilterFunc)
+	// 启动服务监听协程
+	go func() {
+		sd.watch()
+	}()
 
 	// 定期刷新服务列表
-	if config.RefreshInterval > 0 {
-		go resolver.refreshLoop(config.RefreshInterval, config.FilterFunc)
+	if resolverConfig.RefreshInterval > 0 {
+		go resolver.refreshLoop(resolverConfig.RefreshInterval, resolverConfig.FilterFunc)
 	}
 
 	return resolver, nil
@@ -124,31 +126,6 @@ func (r *ServiceResolver) GetServices() []*ServiceInfo {
 	return services
 }
 
-// watchUpdates 监听服务更新
-func (r *ServiceResolver) watchUpdates(updateCh <-chan *ServiceUpdate, filter FilterFunc) {
-	for {
-		select {
-		case <-r.ctx.Done():
-			return
-		case update := <-updateCh:
-			if update == nil {
-				continue
-			}
-
-			r.mutex.Lock()
-			switch update.Type {
-			case ServiceAdded, ServiceModified:
-				if filter == nil || filter(update.Service) {
-					r.services[update.Service.ID] = update.Service
-				}
-			case ServiceRemoved:
-				delete(r.services, update.Service.ID)
-			}
-			r.mutex.Unlock()
-		}
-	}
-}
-
 // refreshLoop 定期刷新服务列表
 func (r *ServiceResolver) refreshLoop(interval time.Duration, filter FilterFunc) {
 	ticker := time.NewTicker(interval)
@@ -179,42 +156,24 @@ func (r *ServiceResolver) refreshLoop(interval time.Duration, filter FilterFunc)
 }
 
 // refresh 刷新服务列表
+// 修改refresh方法
 func (r *ServiceResolver) refresh() error {
-	conn, err := net.Dial("tcp", "localhost:8080") // 替换为实际的服务发现地址
+	services, err := r.discovery.GetServices(r.name)
 	if err != nil {
 		return err
-	}
-	defer conn.Close()
-
-	msg := Message{Type: Discover, Service: &ServiceInfo{Name: r.name}}
-	if err := json.NewEncoder(conn).Encode(msg); err != nil {
-		return err
-	}
-
-	var response Message
-	if err := json.NewDecoder(conn).Decode(&response); err != nil {
-		return err
-	}
-
-	if response.Error != "" {
-		return fmt.Errorf(response.Error)
 	}
 
 	r.mutex.Lock()
 	defer r.mutex.Unlock()
 
-	// 更新服务列表
-	newServices := make(map[string]*ServiceInfo)
-	for _, service := range response.Response {
-		newServices[service.ID] = service
+	// 过滤过期服务
+	now := time.Now()
+	r.services = make(map[string]*ServiceInfo)
+	for _, service := range services {
+		if service.ExpireTime.After(now) && service.Status == "healthy" {
+			r.services[service.ID] = service
+		}
 	}
-	r.services = newServices
 
-	return nil
-}
-
-// Close 关闭解析器
-func (r *ServiceResolver) Close() error {
-	r.cancel()
 	return nil
 }

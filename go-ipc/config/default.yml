@@ -16,12 +16,17 @@ pool:
   max_size: 20
   idle_timeout: 60
 
-# 新增服务发现配置
+# 合并后的服务发现配置
 discovery:
-  etcd_endpoints:
-    - "http://127.0.0.1:2379"
+  storage: "memory"        # 存储类型: memory/file/multicast
+  ttl: 10                  # 服务过期时间(秒)
+  refresh_interval: 3      # 刷新间隔(秒)
   service_prefix: "/services"
-  refresh_interval: "30s"
+  service_key: "default_key"
+  # 文件存储配置(当storage为file时生效)
+  file_path: "/var/lib/go-ipc/services.json"
+  # 多播配置(当storage为multicast时生效)
+  multicast_addr: "224.0.0.1:5300"
 
 # 新增协议配置
 protocol:

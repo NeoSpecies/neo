@@ -9,7 +9,6 @@ import (
 	"go-ipc/config"
 	"go-ipc/config/loader"
 	"hash/crc32"
-	"log"
 	"net/http"
 	"os"
 	"sync"
@@ -51,33 +50,22 @@ var (
 	}
 )
 
+// 获取 ServiceDiscovery 单例实例的函数
+// 获取 ServiceDiscovery 单例实例的函数
+func GetServiceDiscovery() *discovery.ServiceDiscovery {
+	sdOnce.Do(func() {
+		// 移除对 ETCDEndpoints 的引用，直接调用无参数的 GetInstance()
+		sdInstance = discovery.GetInstance()
+	})
+	return sdInstance
+}
+
 // 初始化协程池和异步任务存储
 func init() {
 	workerPool = NewWorkerPool(100)
 	// 移除连接池初始化逻辑
 	// 初始化异步任务存储
 	asyncTasks.tasks = make(map[string]*AsyncTask)
-}
-
-// 新增：获取 ServiceDiscovery 单例实例的函数
-func GetServiceDiscovery() *discovery.ServiceDiscovery {
-	sdOnce.Do(func() {
-		// 假设 endpoints 和 someString 是合适的参数
-		endpoints := []string{"exampleEndpoint"}
-		someString := "exampleString"
-		var err error
-		sdInstance, err = discovery.NewServiceDiscovery(endpoints, someString)
-		if err != nil {
-			log.Fatalf("Failed to initialize ServiceDiscovery: %v", err)
-		}
-	})
-	return sdInstance
-}
-
-// 初始化协程池
-func init() {
-	workerPool = NewWorkerPool(100)
-	// 移除连接池初始化逻辑
 }
 
 // 新增：异步任务提交方法（替代原有同步调用）
@@ -163,8 +151,6 @@ func main() {
 	connPool = NewConnPool()
 
 	// 获取 ServiceDiscovery 单例实例并启动服务发现
-	// 如果不需要使用 sd 变量，可以直接调用方法
-	GetServiceDiscovery()
 
 	serverCfg := config.Get().HTTP // HTTP服务配置
 
@@ -189,12 +175,9 @@ func main() {
 
 	// 处理 HTTP 请求
 	http.HandleFunc("/trigger", func(w http.ResponseWriter, r *http.Request) {
-		// fmt.Printf("接收到 HTTP 请求：%s %s\n", r.Method, r.URL.Path)
-
 		var req struct{ Input string }
 		err := json.NewDecoder(r.Body).Decode(&req)
 		if err != nil {
-			// fmt.Printf("解码请求体失败：%v\n", err)
 			http.Error(w, "无效的请求体", 400)
 			return
 		}
@@ -209,8 +192,6 @@ func main() {
 			http.Error(w, "Python 服务返回空结果", 500)
 			return
 		}
-
-		// fmt.Printf("Python 返回结果类型：%T\n", pythonResult)
 
 		result, ok := pythonResult.(map[string]interface{})
 		if !ok {
@@ -237,13 +218,9 @@ func main() {
 
 // 修改IPC调用函数，使用连接池和压缩
 func callPythonIpcService(method string, params map[string]interface{}) (interface{}, error) {
-	// 创建 ServiceDiscovery 实例，需要根据实际情况修改 endpoints 和 serviceKey
-	sd, err := discovery.NewServiceDiscovery([]string{"localhost:2379"}, "/services")
-	if err != nil {
-		fmt.Printf("创建 ServiceDiscovery 实例失败: %v\n", err)
-	}
+	sd := GetServiceDiscovery()
 	// 获取所有服务
-	services, err := sd.GetServices("")
+	services, err := sd.GetServices("python.service.demo")
 	if err != nil {
 		fmt.Printf("获取服务列表失败: %v\n", err)
 	} else {
@@ -252,33 +229,35 @@ func callPythonIpcService(method string, params map[string]interface{}) (interfa
 			fmt.Printf("名称: %s, ID: %s, 地址: %s:%d\n", service.Name, service.ID, service.Address, service.Port)
 		}
 	}
+
+	if len(services) == 0 {
+		return nil, fmt.Errorf("未找到可用的 Python 服务")
+	}
+
+	// 简单选择第一个服务
+	service := services[0]
+	serviceAddr := fmt.Sprintf("%s:%d", service.Address, service.Port)
+
 	// 从连接池获取连接
-	conn, err := connPool.Get("127.0.0.1:9091")
+	conn, err := connPool.Get(serviceAddr)
 	if err != nil {
-		// fmt.Printf("[ERROR] 连接 Python IPC 服务失败: %v\n", err)
 		return nil, fmt.Errorf("连接 Python IPC 服务失败: %v", err)
 	}
-	defer connPool.Put("127.0.0.1:9091", conn)
-	// fmt.Printf("[DEBUG] 成功获取连接池连接\n")
+	defer connPool.Put(serviceAddr, conn)
 
 	// 序列化参数
 	paramData, err := json.Marshal(params)
 	if err != nil {
-		// fmt.Printf("[ERROR] 参数序列化失败: %v\n", err)
 		return nil, fmt.Errorf("参数序列化失败: %v", err)
 	}
-	// fmt.Printf("[DEBUG] 参数序列化成功，长度: %d bytes\n", len(paramData))
 
 	// 检查是否需要压缩
 	if ShouldCompress(paramData) {
-		// fmt.Printf("[DEBUG] 数据需要压缩，原始大小: %d bytes\n", len(paramData))
-		compressedData, compressErr := CompressData(paramData) // 重命名为 compressErr
+		compressedData, compressErr := CompressData(paramData)
 		if compressErr != nil {
-			// fmt.Printf("[ERROR] 压缩数据失败: %v\n", compressErr)
 			return nil, fmt.Errorf("压缩数据失败: %v", compressErr)
 		}
 		paramData = compressedData
-		// fmt.Printf("[DEBUG] 压缩后大小: %d bytes\n", len(paramData))
 	}
 
 	msgID := []byte(uuid.New().String())
@@ -288,141 +267,106 @@ func callPythonIpcService(method string, params map[string]interface{}) (interfa
 	// 写入协议头
 	magic := uint16(0xAEBD)
 	if err = binary.Write(request, binary.BigEndian, magic); err != nil {
-		// fmt.Printf("[ERROR] 写入魔数失败: %v\n", err)
 		return nil, fmt.Errorf("写入魔数失败: %v", err)
 	}
 	binary.Write(totalData, binary.BigEndian, magic)
-	// fmt.Printf("[DEBUG] 写入魔数: 0x%04X\n", magic)
 
 	version := byte(0x01)
 	if err = request.WriteByte(version); err != nil {
-		// fmt.Printf("[ERROR] 写入版本失败: %v\n", err)
 		return nil, fmt.Errorf("写入版本失败: %v", err)
 	}
 	totalData.WriteByte(version)
-	// fmt.Printf("[DEBUG] 写入版本: %d\n", version)
 
 	// 写入消息ID
 	msgIDLen := uint16(len(msgID))
 	if err = binary.Write(request, binary.BigEndian, msgIDLen); err != nil {
-		// fmt.Printf("[ERROR] 写入消息ID长度失败: %v\n", err)
 		return nil, fmt.Errorf("写入消息ID长度失败: %v", err)
 	}
-	if _, writeMsgIDErr := request.Write(msgID); writeMsgIDErr != nil { // 重命名为 writeMsgIDErr
-		// fmt.Printf("[ERROR] 写入消息ID失败: %v\n", writeMsgIDErr)
+	if _, writeMsgIDErr := request.Write(msgID); writeMsgIDErr != nil {
 		return nil, fmt.Errorf("写入消息ID失败: %v", writeMsgIDErr)
 	}
 	binary.Write(totalData, binary.BigEndian, msgIDLen)
 	totalData.Write(msgID)
-	// fmt.Printf("[DEBUG] 写入消息ID: %s\n", string(msgID))
 
 	// 写入方法名
 	methodBytes := []byte(method)
 	methodLen := uint16(len(methodBytes))
 	if err = binary.Write(request, binary.BigEndian, methodLen); err != nil {
-		// fmt.Printf("[ERROR] 写入方法名长度失败: %v\n", err)
 		return nil, fmt.Errorf("写入方法名长度失败: %v", err)
 	}
-	if _, writeMethodErr := request.Write(methodBytes); writeMethodErr != nil { // 重命名为 writeMethodErr
-		// fmt.Printf("[ERROR] 写入方法名失败: %v\n", writeMethodErr)
+	if _, writeMethodErr := request.Write(methodBytes); writeMethodErr != nil {
 		return nil, fmt.Errorf("写入方法名失败: %v", writeMethodErr)
 	}
 	binary.Write(totalData, binary.BigEndian, methodLen)
 	totalData.Write(methodBytes)
-	// fmt.Printf("[DEBUG] 写入方法名: %s\n", method)
 
 	// 写入参数内容
 	paramLen := uint32(len(paramData))
 	if err = binary.Write(request, binary.BigEndian, paramLen); err != nil {
-		// fmt.Printf("[ERROR] 写入参数长度失败: %v\n", err)
 		return nil, fmt.Errorf("写入参数长度失败: %v", err)
 	}
-	if _, writeParamErr := request.Write(paramData); writeParamErr != nil { // 重命名为 writeParamErr
-		// fmt.Printf("[ERROR] 写入参数内容失败: %v\n", err)
+	if _, writeParamErr := request.Write(paramData); writeParamErr != nil {
 		return nil, fmt.Errorf("写入参数内容失败: %v", err)
 	}
 	binary.Write(totalData, binary.BigEndian, paramLen)
 	totalData.Write(paramData)
-	// fmt.Printf("[DEBUG] 写入参数，长度: %d bytes\n", paramLen)
 
 	// 写入文件数量（0）
 	fileCount := uint16(0)
 	if err = binary.Write(request, binary.BigEndian, fileCount); err != nil {
-		// fmt.Printf("[ERROR] 写入文件数量失败: %v\n", err)
 		return nil, fmt.Errorf("写入文件数量失败: %v", err)
 	}
 	binary.Write(totalData, binary.BigEndian, fileCount)
-	// fmt.Printf("[DEBUG] 写入文件数量: %d\n", fileCount)
 
 	// 计算校验和
 	checksum := crc32.ChecksumIEEE(totalData.Bytes())
 	if err = binary.Write(request, binary.BigEndian, checksum); err != nil {
-		// fmt.Printf("[ERROR] 写入校验和失败: %v\n", err)
 		return nil, fmt.Errorf("写入校验和失败: %v", err)
 	}
-	// fmt.Printf("[DEBUG] 写入校验和: 0x%08X\n", checksum)
 
 	// 发送请求
-	if _, sendErr := conn.Write(request.Bytes()); sendErr != nil { // 重命名为 sendErr
-		// fmt.Printf("[ERROR] 发送请求失败: %v\n", sendErr)
+	if _, sendErr := conn.Write(request.Bytes()); sendErr != nil {
 		return nil, fmt.Errorf("发送请求失败: %v", sendErr)
 	}
-	// fmt.Printf("[DEBUG] 成功发送请求，总长度: %d bytes\n", len(request.Bytes()))
 
 	reader := bufio.NewReader(conn)
 	magic, err = readUint16(reader)
 	if err != nil || magic != 0xAEBD {
-		// fmt.Printf("[ERROR] 响应魔数无效: 期望=0xAEBD, 实际=0x%04X, 错误=%v\n", magic, err)
 		return nil, fmt.Errorf("响应魔数无效: %v", err)
 	}
-	// fmt.Printf("[DEBUG] 读取响应魔数: 0x%04X\n", magic)
 
 	version, err = reader.ReadByte()
 	if err != nil || version > 1 {
-		// fmt.Printf("[ERROR] 不支持的响应版本: %d, 错误=%v\n", version, err)
 		return nil, fmt.Errorf("不支持的响应版本: %v", version)
 	}
-	// fmt.Printf("[DEBUG] 读取响应版本: %d\n", version)
 
 	bodyLen, err := readUint32(reader)
 	if err != nil {
-		// fmt.Printf("[ERROR] 读取响应体长度失败: %v\n", err)
 		return nil, fmt.Errorf("读取响应体长度失败: %v", err)
 	}
-	// fmt.Printf("[DEBUG] 读取响应体长度: %d bytes\n", bodyLen)
 
 	bodyData, err := readBytes(reader, int(bodyLen))
 	if err != nil {
-		// fmt.Printf("[ERROR] 读取响应体失败: %v\n", err)
 		return nil, fmt.Errorf("读取响应体失败: %v", err)
 	}
-	// fmt.Printf("[DEBUG] 成功读取响应体，长度: %d bytes\n", len(bodyData))
 
 	// 检查是否需要解压
 	if ShouldCompress(bodyData) {
-		fmt.Printf("[DEBUG] 响应数据需要解压，压缩大小: %d bytes\n", len(bodyData))
 		decompressedData, err := DecompressData(bodyData)
 		if err != nil {
-			fmt.Printf("[ERROR] 解压数据失败: %v\n", err)
 			return nil, fmt.Errorf("解压数据失败: %v", err)
 		}
 		bodyData = decompressedData
-		// fmt.Printf("[DEBUG] 解压后大小: %d bytes\n", len(bodyData))
 	}
 
 	var response map[string]interface{}
 	if err := json.Unmarshal(bodyData, &response); err != nil {
-		// fmt.Printf("[ERROR] 响应反序列化失败: %v\n", err)
-		// fmt.Printf("[DEBUG] 响应体内容: %s\n", string(bodyData))
 		return nil, fmt.Errorf("响应反序列化失败: %v", err)
 	}
-	// fmt.Printf("[DEBUG] 响应反序列化成功: %+v\n", response)
 
 	if response["error"] != nil {
-		fmt.Printf("[ERROR] Python 服务返回错误: %v\n", response["error"])
 		return nil, fmt.Errorf("Python 服务错误: %v", response["error"])
 	}
 
-	// fmt.Printf("[DEBUG] 成功获取 Python 服务响应: %+v\n", response["result"])
 	return response["result"], nil
 }

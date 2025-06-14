@@ -20,9 +20,13 @@ type GlobalConfig struct {
 
 // DiscoveryConfig 服务发现配置
 type DiscoveryConfig struct {
-	ETCDEndpoints   []string `yaml:"etcd_endpoints"`
-	ServicePrefix   string   `yaml:"service_prefix"`
-	RefreshInterval string   `yaml:"refresh_interval"`
+	Storage         string `yaml:"storage"`
+	TTL             int    `yaml:"ttl"`
+	RefreshInterval int    `yaml:"refresh_interval"`
+	ServicePrefix   string `yaml:"service_prefix"`
+	ServiceKey      string `yaml:"service_key"`
+	FilePath        string `yaml:"file_path"`
+	MulticastAddr   string `yaml:"multicast_addr"`
 }
 
 // ProtocolConfig 协议配置

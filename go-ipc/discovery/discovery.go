@@ -2,16 +2,9 @@ package discovery
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
-	"log"
-	"strings"
-	"time"
-
-	"net"
+	"go-ipc/config" // 添加配置包导入
 	"sync"
-
-	clientv3 "go.etcd.io/etcd/client/v3"
+	"time"
 )
 
 const (
@@ -24,27 +17,15 @@ const (
 
 // ServiceInfo 服务信息
 type ServiceInfo struct {
-	Name      string            `json:"name"`       // 服务名称
-	ID        string            `json:"id"`         // 服务实例ID
-	Address   string            `json:"address"`    // 服务地址
-	Port      int               `json:"port"`       // 服务端口
-	Version   string            `json:"version"`    // 服务版本
-	Metadata  map[string]string `json:"metadata"`   // 服务元数据
-	Status    string            `json:"status"`     // 服务状态
-	StartTime time.Time         `json:"start_time"` // 启动时间
-}
-
-// ServiceDiscovery 服务发现
-type ServiceDiscovery struct {
-	client     *clientv3.Client // etcd客户端
-	serviceKey string           // 服务键前缀
-	ttl        int64            // 租约TTL
-	leaseID    clientv3.LeaseID // 租约ID
-	mutex      sync.RWMutex
-	services   map[string]*ServiceInfo          // 本地服务缓存
-	watchers   map[string][]chan *ServiceUpdate // 服务变更通知
-	ctx        context.Context
-	cancel     context.CancelFunc
+	Name       string            `json:"name"`        // 服务名称
+	ID         string            `json:"id"`          // 服务实例ID
+	Address    string            `json:"address"`     // 服务地址
+	Port       int               `json:"port"`        // 服务端口
+	Version    string            `json:"version"`     // 服务版本
+	Metadata   map[string]string `json:"metadata"`    // 服务元数据
+	Status     string            `json:"status"`      // 服务状态
+	StartTime  time.Time         `json:"start_time"`  // 启动时间
+	ExpireTime time.Time         `json:"expire_time"` // 服务过期时间
 }
 
 // ServiceUpdate 服务更新事件
@@ -65,316 +46,86 @@ const (
 	ServiceModified
 )
 
-// NewServiceDiscovery 创建服务发现实例
-func NewServiceDiscovery(endpoints []string, serviceKey string) (*ServiceDiscovery, error) {
-	client, err := clientv3.New(clientv3.Config{
-		Endpoints:   endpoints,
-		DialTimeout: 5 * time.Second,
+// ServiceDiscovery 服务发现
+// 新增存储接口抽象
+type Storage interface {
+	Register(service *ServiceInfo) error
+	Deregister(serviceID string) error
+	GetService(name, id string) (*ServiceInfo, error)
+	GetServices(name string) ([]*ServiceInfo, error)
+	Watch() chan *ServiceUpdate
+	Close() error
+}
+
+// 修改ServiceDiscovery结构
+type ServiceDiscovery struct {
+	storage    Storage // 存储接口
+	serviceKey string  // 服务键前缀
+	ttl        int64   // 租约TTL
+	mutex      sync.RWMutex
+	watchers   map[string][]chan *ServiceUpdate
+	ctx        context.Context
+	cancel     context.CancelFunc
+}
+
+var (
+	instance *ServiceDiscovery
+	once     sync.Once
+)
+
+// GetInstance 获取服务发现单例实例
+func GetInstance() *ServiceDiscovery {
+	once.Do(func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		cfg := config.GetDiscoveryConfig()
+		var storage Storage
+
+		// 根据配置选择存储类型 - 暂时只保留内存存储实现
+		storage = NewInMemoryStorage(int64(cfg.TTL)) // 添加类型转换
+
+		instance = &ServiceDiscovery{
+			storage:    storage,
+			serviceKey: cfg.ServiceKey,
+			ttl:        int64(cfg.TTL),
+			watchers:   make(map[string][]chan *ServiceUpdate),
+			ctx:        ctx,
+			cancel:     cancel,
+		}
+
+		// 启动服务发现
+		go instance.watch()
 	})
-	if err != nil {
-		return nil, err
-	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-
-	sd := &ServiceDiscovery{
-		client:     client,
-		serviceKey: serviceKey,
-		ttl:        DefaultTTL,
-		services:   make(map[string]*ServiceInfo),
-		watchers:   make(map[string][]chan *ServiceUpdate),
-		ctx:        ctx,
-		cancel:     cancel,
-	}
-
-	// 打印注册服务的 IPC 地址
-	fmt.Printf("注册服务的 IPC 地址: %v\n", endpoints)
-
-	// 启动服务发现
-	go sd.watch()
-
-	return sd, nil
+	return instance
 }
 
 // Register 注册服务
+// 修改Register方法
 func (sd *ServiceDiscovery) Register(service *ServiceInfo) error {
-	// 创建租约
-	lease, err := sd.client.Grant(sd.ctx, sd.ttl)
-	if err != nil {
-		return err
-	}
+	sd.mutex.Lock()
+	defer sd.mutex.Unlock()
 
-	// 服务数据序列化
-	data, err := json.Marshal(service)
-	if err != nil {
-		return err
-	}
-
-	// 注册服务
-	key := fmt.Sprintf("%s/%s/%s", sd.serviceKey, service.Name, service.ID)
-	_, err = sd.client.Put(sd.ctx, key, string(data), clientv3.WithLease(lease.ID))
-	if err != nil {
-		return err
-	}
-
-	sd.leaseID = lease.ID
-
-	// 自动续约
-	keepAliveCh, err := sd.client.KeepAlive(sd.ctx, lease.ID)
-	if err != nil {
-		return err
-	}
-
-	go func() {
-		for {
-			select {
-			case <-sd.ctx.Done():
-				return
-			case resp := <-keepAliveCh:
-				if resp == nil {
-					// 续约失败，重新注册
-					if err := sd.Register(service); err != nil {
-						log.Printf("Service re-register failed: %v", err)
-					}
-					return
-				}
-			}
-		}
-	}()
-
-	return nil
+	// 添加服务过期时间
+	service.ExpireTime = time.Now().Add(time.Duration(sd.ttl) * time.Second)
+	return sd.storage.Register(service)
 }
 
 // Deregister 注销服务
 func (sd *ServiceDiscovery) Deregister(service *ServiceInfo) error {
-	key := fmt.Sprintf("%s/%s/%s", sd.serviceKey, service.Name, service.ID)
-	_, err := sd.client.Delete(sd.ctx, key)
-	if err != nil {
-		return err
-	}
-
-	// 撤销租约
-	if sd.leaseID != 0 {
-		_, err = sd.client.Revoke(sd.ctx, sd.leaseID)
-	}
-
-	return err
+	return sd.storage.Deregister(service.ID)
 }
 
 // GetService 获取服务信息
 func (sd *ServiceDiscovery) GetService(name, id string) (*ServiceInfo, error) {
-	key := fmt.Sprintf("%s/%s/%s", sd.serviceKey, name, id)
-	resp, err := sd.client.Get(sd.ctx, key)
-	if err != nil {
-		return nil, err
-	}
-
-	if len(resp.Kvs) == 0 {
-		return nil, fmt.Errorf("service not found: %s", key)
-	}
-
-	var service ServiceInfo
-	if err := json.Unmarshal(resp.Kvs[0].Value, &service); err != nil {
-		return nil, err
-	}
-
-	return &service, nil
+	return sd.storage.GetService(name, id)
 }
 
 // GetServices 获取所有服务
 func (sd *ServiceDiscovery) GetServices(name string) ([]*ServiceInfo, error) {
-	prefix := fmt.Sprintf("%s/%s/", sd.serviceKey, name)
-	resp, err := sd.client.Get(sd.ctx, prefix, clientv3.WithPrefix())
-	if err != nil {
-		return nil, err
-	}
-
-	services := make([]*ServiceInfo, 0, len(resp.Kvs))
-	for _, kv := range resp.Kvs {
-		var service ServiceInfo
-		if err := json.Unmarshal(kv.Value, &service); err != nil {
-			continue
-		}
-		services = append(services, &service)
-	}
-
-	return services, nil
+	return sd.storage.GetServices(name)
 }
 
-// Watch 监听服务变更
-func (sd *ServiceDiscovery) Watch(name string) (<-chan *ServiceUpdate, error) {
-	sd.mutex.Lock()
-	defer sd.mutex.Unlock()
-
-	ch := make(chan *ServiceUpdate, 10)
-	if _, ok := sd.watchers[name]; !ok {
-		sd.watchers[name] = make([]chan *ServiceUpdate, 0)
-	}
-	sd.watchers[name] = append(sd.watchers[name], ch)
-
-	return ch, nil
-}
-
-// watch 监听服务变更并通知
+// watch 监听服务变更
 func (sd *ServiceDiscovery) watch() {
-	prefix := sd.serviceKey + "/"
-	rch := sd.client.Watch(sd.ctx, prefix, clientv3.WithPrefix())
-
-	for {
-		select {
-		case <-sd.ctx.Done():
-			return
-		case wresp := <-rch:
-			for _, ev := range wresp.Events {
-				var (
-					service ServiceInfo
-					typ     UpdateType
-				)
-
-				switch ev.Type {
-				case clientv3.EventTypePut:
-					if err := json.Unmarshal(ev.Kv.Value, &service); err != nil {
-						continue
-					}
-					if ev.IsCreate() {
-						typ = ServiceAdded
-					} else {
-						typ = ServiceModified
-					}
-				case clientv3.EventTypeDelete:
-					// 解析服务名称
-					key := string(ev.Kv.Key)
-					parts := strings.Split(key, "/")
-					if len(parts) < 3 {
-						continue
-					}
-					service.Name = parts[len(parts)-2]
-					service.ID = parts[len(parts)-1]
-					typ = ServiceRemoved
-				}
-
-				// 通知所有监听者
-				sd.mutex.RLock()
-				if watchers, ok := sd.watchers[service.Name]; ok {
-					for _, ch := range watchers {
-						select {
-						case ch <- &ServiceUpdate{Type: typ, Service: &service}:
-						default:
-							// 通道已满，跳过
-						}
-					}
-				}
-				sd.mutex.RUnlock()
-			}
-		}
-	}
-}
-
-// Close 关闭服务发现
-func (sd *ServiceDiscovery) Close() error {
-	sd.cancel()
-
-	// 关闭所有监听通道
-	sd.mutex.Lock()
-	for _, watchers := range sd.watchers {
-		for _, ch := range watchers {
-			close(ch)
-		}
-	}
-	sd.watchers = nil
-	sd.mutex.Unlock()
-
-	return sd.client.Close()
-}
-
-// CustomServiceDiscovery 自定义服务发现
-type CustomServiceDiscovery struct {
-	listener net.Listener
-	services map[string]*ServiceInfo
-	mutex    sync.RWMutex
-	stopCh   chan struct{}
-}
-
-// NewCustomServiceDiscovery 创建自定义服务发现实例
-func NewCustomServiceDiscovery(addr string) (*CustomServiceDiscovery, error) {
-	listener, err := net.Listen("tcp", addr)
-	if err != nil {
-		return nil, err
-	}
-
-	sd := &CustomServiceDiscovery{
-		listener: listener,
-		services: make(map[string]*ServiceInfo),
-		stopCh:   make(chan struct{}),
-	}
-
-	go sd.acceptConnections()
-
-	return sd, nil
-}
-
-// acceptConnections 接受连接
-func (sd *CustomServiceDiscovery) acceptConnections() {
-	for {
-		select {
-		case <-sd.stopCh:
-			return
-		default:
-			conn, err := sd.listener.Accept()
-			if err != nil {
-				continue
-			}
-			go sd.handleConnection(conn)
-		}
-	}
-}
-
-// handleConnection 处理连接
-func (sd *CustomServiceDiscovery) handleConnection(conn net.Conn) {
-	defer conn.Close()
-
-	var msg Message
-	if err := json.NewDecoder(conn).Decode(&msg); err != nil {
-		return
-	}
-
-	switch msg.Type {
-	case Register:
-		sd.mutex.Lock()
-		sd.services[msg.Service.ID] = msg.Service
-		sd.mutex.Unlock()
-		response := Message{Type: Register, Error: ""}
-		json.NewEncoder(conn).Encode(response)
-	case Deregister:
-		sd.mutex.Lock()
-		delete(sd.services, msg.Service.ID)
-		sd.mutex.Unlock()
-		response := Message{Type: Deregister, Error: ""}
-		json.NewEncoder(conn).Encode(response)
-	case Discover:
-		sd.mutex.RLock()
-		var services []*ServiceInfo
-		for _, service := range sd.services {
-			if service.Name == msg.Service.Name {
-				services = append(services, service)
-			}
-		}
-		sd.mutex.RUnlock()
-		response := Message{Type: Discover, Response: services, Error: ""}
-		json.NewEncoder(conn).Encode(response)
-	case Heartbeat:
-		sd.mutex.Lock()
-		if service, exists := sd.services[msg.Service.ID]; exists {
-			service.Status = "healthy"
-		}
-		sd.mutex.Unlock()
-		response := Message{Type: Heartbeat, Error: ""}
-		json.NewEncoder(conn).Encode(response)
-	}
-}
-
-// Close 关闭服务发现
-func (sd *CustomServiceDiscovery) Close() error {
-	close(sd.stopCh)
-	return sd.listener.Close()
+	// 实现监听逻辑
 }
