@@ -9,11 +9,13 @@ import (
 	"go-ipc/config"
 	"go-ipc/config/loader"
 	"hash/crc32"
-	"io"
+	"log"
 	"net/http"
 	"os"
 	"sync"
 	"time"
+
+	"go-ipc/discovery"
 
 	"github.com/google/uuid"
 )
@@ -39,12 +41,38 @@ type AsyncTask struct {
 
 var (
 	connPool *ConnPool
-	// 新增：异步任务存储（带锁）
-	asyncTasks = struct {
+	// 新增：ServiceDiscovery 单例实例和 sync.Once 变量
+	sdInstance *discovery.ServiceDiscovery
+	sdOnce     sync.Once
+	// 新增：异步任务存储（带锁）声明
+	asyncTasks struct {
 		sync.RWMutex
 		tasks map[string]*AsyncTask
-	}{tasks: make(map[string]*AsyncTask)}
+	}
 )
+
+// 初始化协程池和异步任务存储
+func init() {
+	workerPool = NewWorkerPool(100)
+	// 移除连接池初始化逻辑
+	// 初始化异步任务存储
+	asyncTasks.tasks = make(map[string]*AsyncTask)
+}
+
+// 新增：获取 ServiceDiscovery 单例实例的函数
+func GetServiceDiscovery() *discovery.ServiceDiscovery {
+	sdOnce.Do(func() {
+		// 假设 endpoints 和 someString 是合适的参数
+		endpoints := []string{"exampleEndpoint"}
+		someString := "exampleString"
+		var err error
+		sdInstance, err = discovery.NewServiceDiscovery(endpoints, someString)
+		if err != nil {
+			log.Fatalf("Failed to initialize ServiceDiscovery: %v", err)
+		}
+	})
+	return sdInstance
+}
 
 // 初始化协程池
 func init() {
@@ -134,6 +162,10 @@ func main() {
 	// 在配置加载完成后初始化连接池
 	connPool = NewConnPool()
 
+	// 获取 ServiceDiscovery 单例实例并启动服务发现
+	// 如果不需要使用 sd 变量，可以直接调用方法
+	GetServiceDiscovery()
+
 	serverCfg := config.Get().HTTP // HTTP服务配置
 
 	// 注册 Go 测试函数（供 Python 调用）
@@ -205,8 +237,21 @@ func main() {
 
 // 修改IPC调用函数，使用连接池和压缩
 func callPythonIpcService(method string, params map[string]interface{}) (interface{}, error) {
-	// fmt.Printf("[DEBUG] 开始调用 Python 服务: method=%s, params=%+v\n", method, params)
-
+	// 创建 ServiceDiscovery 实例，需要根据实际情况修改 endpoints 和 serviceKey
+	sd, err := discovery.NewServiceDiscovery([]string{"localhost:2379"}, "/services")
+	if err != nil {
+		fmt.Printf("创建 ServiceDiscovery 实例失败: %v\n", err)
+	}
+	// 获取所有服务
+	services, err := sd.GetServices("")
+	if err != nil {
+		fmt.Printf("获取服务列表失败: %v\n", err)
+	} else {
+		fmt.Println("已注册的服务列表:")
+		for _, service := range services {
+			fmt.Printf("名称: %s, ID: %s, 地址: %s:%d\n", service.Name, service.ID, service.Address, service.Port)
+		}
+	}
 	// 从连接池获取连接
 	conn, err := connPool.Get("127.0.0.1:9091")
 	if err != nil {
@@ -380,31 +425,4 @@ func callPythonIpcService(method string, params map[string]interface{}) (interfa
 
 	// fmt.Printf("[DEBUG] 成功获取 Python 服务响应: %+v\n", response["result"])
 	return response["result"], nil
-}
-
-// 辅助函数：按大端序读取 2 字节为 uint16
-func readUint16(reader *bufio.Reader) (uint16, error) {
-	b := make([]byte, 2)
-	if _, err := io.ReadFull(reader, b); err != nil {
-		return 0, err
-	}
-	return binary.BigEndian.Uint16(b), nil
-}
-
-// 辅助函数：按大端序读取 4 字节为 uint32
-func readUint32(reader *bufio.Reader) (uint32, error) {
-	b := make([]byte, 4)
-	if _, err := io.ReadFull(reader, b); err != nil {
-		return 0, err
-	}
-	return binary.BigEndian.Uint32(b), nil
-}
-
-// 辅助函数：读取指定长度的字节
-func readBytes(reader *bufio.Reader, length int) ([]byte, error) {
-	b := make([]byte, length)
-	if _, err := io.ReadFull(reader, b); err != nil {
-		return nil, err
-	}
-	return b, nil
 }

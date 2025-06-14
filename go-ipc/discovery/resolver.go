@@ -6,7 +6,9 @@ import (
 	"sync"
 	"time"
 
+	"encoding/json"
 	"go-ipc/pool"
+	"net"
 )
 
 // ServiceResolver 服务解析器
@@ -22,10 +24,10 @@ type ServiceResolver struct {
 
 // ResolverConfig 解析器配置
 type ResolverConfig struct {
-	Name         string                  // 服务名称
-	LoadBalance  pool.LoadBalanceStrategy // 负载均衡策略
-	FilterFunc   FilterFunc              // 服务过滤函数
-	RefreshInterval time.Duration        // 刷新间隔
+	Name            string                   // 服务名称
+	LoadBalance     pool.LoadBalanceStrategy // 负载均衡策略
+	FilterFunc      FilterFunc               // 服务过滤函数
+	RefreshInterval time.Duration            // 刷新间隔
 }
 
 // FilterFunc 服务过滤函数
@@ -178,9 +180,24 @@ func (r *ServiceResolver) refreshLoop(interval time.Duration, filter FilterFunc)
 
 // refresh 刷新服务列表
 func (r *ServiceResolver) refresh() error {
-	services, err := r.discovery.GetServices(r.name)
+	conn, err := net.Dial("tcp", "localhost:8080") // 替换为实际的服务发现地址
 	if err != nil {
 		return err
+	}
+	defer conn.Close()
+
+	msg := Message{Type: Discover, Service: &ServiceInfo{Name: r.name}}
+	if err := json.NewEncoder(conn).Encode(msg); err != nil {
+		return err
+	}
+
+	var response Message
+	if err := json.NewDecoder(conn).Decode(&response); err != nil {
+		return err
+	}
+
+	if response.Error != "" {
+		return fmt.Errorf(response.Error)
 	}
 
 	r.mutex.Lock()
@@ -188,7 +205,7 @@ func (r *ServiceResolver) refresh() error {
 
 	// 更新服务列表
 	newServices := make(map[string]*ServiceInfo)
-	for _, service := range services {
+	for _, service := range response.Response {
 		newServices[service.ID] = service
 	}
 	r.services = newServices
@@ -200,4 +217,4 @@ func (r *ServiceResolver) refresh() error {
 func (r *ServiceResolver) Close() error {
 	r.cancel()
 	return nil
-} 
+}

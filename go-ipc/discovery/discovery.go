@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"log"
 	"strings"
-	"sync"
 	"time"
+
+	"net"
+	"sync"
 
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
@@ -25,7 +27,7 @@ type ServiceInfo struct {
 	Name      string            `json:"name"`       // 服务名称
 	ID        string            `json:"id"`         // 服务实例ID
 	Address   string            `json:"address"`    // 服务地址
-	Port      int              `json:"port"`       // 服务端口
+	Port      int               `json:"port"`       // 服务端口
 	Version   string            `json:"version"`    // 服务版本
 	Metadata  map[string]string `json:"metadata"`   // 服务元数据
 	Status    string            `json:"status"`     // 服务状态
@@ -34,12 +36,12 @@ type ServiceInfo struct {
 
 // ServiceDiscovery 服务发现
 type ServiceDiscovery struct {
-	client     *clientv3.Client  // etcd客户端
-	serviceKey string            // 服务键前缀
+	client     *clientv3.Client // etcd客户端
+	serviceKey string           // 服务键前缀
 	ttl        int64            // 租约TTL
 	leaseID    clientv3.LeaseID // 租约ID
 	mutex      sync.RWMutex
-	services   map[string]*ServiceInfo // 本地服务缓存
+	services   map[string]*ServiceInfo          // 本地服务缓存
 	watchers   map[string][]chan *ServiceUpdate // 服务变更通知
 	ctx        context.Context
 	cancel     context.CancelFunc
@@ -84,6 +86,9 @@ func NewServiceDiscovery(endpoints []string, serviceKey string) (*ServiceDiscove
 		ctx:        ctx,
 		cancel:     cancel,
 	}
+
+	// 打印注册服务的 IPC 地址
+	fmt.Printf("注册服务的 IPC 地址: %v\n", endpoints)
 
 	// 启动服务发现
 	go sd.watch()
@@ -268,7 +273,7 @@ func (sd *ServiceDiscovery) watch() {
 // Close 关闭服务发现
 func (sd *ServiceDiscovery) Close() error {
 	sd.cancel()
-	
+
 	// 关闭所有监听通道
 	sd.mutex.Lock()
 	for _, watchers := range sd.watchers {
@@ -280,4 +285,96 @@ func (sd *ServiceDiscovery) Close() error {
 	sd.mutex.Unlock()
 
 	return sd.client.Close()
-} 
+}
+
+// CustomServiceDiscovery 自定义服务发现
+type CustomServiceDiscovery struct {
+	listener net.Listener
+	services map[string]*ServiceInfo
+	mutex    sync.RWMutex
+	stopCh   chan struct{}
+}
+
+// NewCustomServiceDiscovery 创建自定义服务发现实例
+func NewCustomServiceDiscovery(addr string) (*CustomServiceDiscovery, error) {
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		return nil, err
+	}
+
+	sd := &CustomServiceDiscovery{
+		listener: listener,
+		services: make(map[string]*ServiceInfo),
+		stopCh:   make(chan struct{}),
+	}
+
+	go sd.acceptConnections()
+
+	return sd, nil
+}
+
+// acceptConnections 接受连接
+func (sd *CustomServiceDiscovery) acceptConnections() {
+	for {
+		select {
+		case <-sd.stopCh:
+			return
+		default:
+			conn, err := sd.listener.Accept()
+			if err != nil {
+				continue
+			}
+			go sd.handleConnection(conn)
+		}
+	}
+}
+
+// handleConnection 处理连接
+func (sd *CustomServiceDiscovery) handleConnection(conn net.Conn) {
+	defer conn.Close()
+
+	var msg Message
+	if err := json.NewDecoder(conn).Decode(&msg); err != nil {
+		return
+	}
+
+	switch msg.Type {
+	case Register:
+		sd.mutex.Lock()
+		sd.services[msg.Service.ID] = msg.Service
+		sd.mutex.Unlock()
+		response := Message{Type: Register, Error: ""}
+		json.NewEncoder(conn).Encode(response)
+	case Deregister:
+		sd.mutex.Lock()
+		delete(sd.services, msg.Service.ID)
+		sd.mutex.Unlock()
+		response := Message{Type: Deregister, Error: ""}
+		json.NewEncoder(conn).Encode(response)
+	case Discover:
+		sd.mutex.RLock()
+		var services []*ServiceInfo
+		for _, service := range sd.services {
+			if service.Name == msg.Service.Name {
+				services = append(services, service)
+			}
+		}
+		sd.mutex.RUnlock()
+		response := Message{Type: Discover, Response: services, Error: ""}
+		json.NewEncoder(conn).Encode(response)
+	case Heartbeat:
+		sd.mutex.Lock()
+		if service, exists := sd.services[msg.Service.ID]; exists {
+			service.Status = "healthy"
+		}
+		sd.mutex.Unlock()
+		response := Message{Type: Heartbeat, Error: ""}
+		json.NewEncoder(conn).Encode(response)
+	}
+}
+
+// Close 关闭服务发现
+func (sd *CustomServiceDiscovery) Close() error {
+	close(sd.stopCh)
+	return sd.listener.Close()
+}

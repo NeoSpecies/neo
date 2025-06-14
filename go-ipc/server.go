@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"hash/crc32" // 替换为正确包名
+	"io"         // 新增 io 包导入
 	"net"
 	"sync"
 )
@@ -205,4 +206,25 @@ func handleConnection(conn net.Conn) {
 	header = append(header, version)
 	header = binary.BigEndian.AppendUint32(header, uint32(len(response)))
 	conn.Write(append(header, response...))
+}
+
+// 读取 uint16 类型数据
+func readUint16(reader io.Reader) (uint16, error) {
+	var num uint16
+	err := binary.Read(reader, binary.BigEndian, &num)
+	return num, err
+}
+
+// 读取指定长度的字节数据
+func readBytes(reader io.Reader, length int) ([]byte, error) {
+	data := make([]byte, length)
+	_, err := io.ReadFull(reader, data)
+	return data, err
+}
+
+// 读取 uint32 类型数据
+func readUint32(reader io.Reader) (uint32, error) {
+	var num uint32
+	err := binary.Read(reader, binary.BigEndian, &num)
+	return num, err
 }

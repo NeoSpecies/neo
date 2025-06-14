@@ -11,13 +11,15 @@ import (
 
 	"strconv" // 新增：用于端口类型转换
 
+	"encoding/json"
+
 	"github.com/google/uuid"
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
 // ServiceRegistry 服务注册器
 type ServiceRegistry struct {
-	discovery  *ServiceDiscovery
+	discovery  *CustomServiceDiscovery // 修改字段类型
 	service    *ServiceInfo
 	healthChan chan struct{}
 	mutex      sync.RWMutex
@@ -41,7 +43,7 @@ type RegistryConfig struct {
 }
 
 // NewServiceRegistry 创建服务注册器
-func NewServiceRegistry(discovery *ServiceDiscovery, config RegistryConfig) (*ServiceRegistry, error) {
+func NewServiceRegistry(discovery *CustomServiceDiscovery, config RegistryConfig) (*ServiceRegistry, error) {
 	// 生成服务实例ID
 	hostname, _ := os.Hostname()
 	id := fmt.Sprintf("%s-%s", hostname, uuid.New().String())
@@ -59,9 +61,10 @@ func NewServiceRegistry(discovery *ServiceDiscovery, config RegistryConfig) (*Se
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel() // 确保在函数返回时取消上下文
 
 	registry := &ServiceRegistry{
-		discovery:  discovery,
+		discovery:  discovery, // 现在类型匹配
 		service:    service,
 		healthChan: make(chan struct{}, 1),
 		ctx:        ctx,
@@ -74,6 +77,9 @@ func NewServiceRegistry(discovery *ServiceDiscovery, config RegistryConfig) (*Se
 		return nil, err
 	}
 
+	// 启动心跳检测
+	go registry.heartbeat()
+
 	// 启动健康检查
 	if config.HealthCheck {
 		go registry.healthCheck()
@@ -84,13 +90,52 @@ func NewServiceRegistry(discovery *ServiceDiscovery, config RegistryConfig) (*Se
 
 // register 注册服务
 func (r *ServiceRegistry) register() error {
-	return r.discovery.Register(r.service)
+	conn, err := net.Dial("tcp", "localhost:8080") // 替换为实际的服务发现地址
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	msg := Message{Type: Register, Service: r.service}
+	if err := json.NewEncoder(conn).Encode(msg); err != nil {
+		return err
+	}
+
+	var response Message
+	if err := json.NewDecoder(conn).Decode(&response); err != nil {
+		return err
+	}
+
+	if response.Error != "" {
+		return fmt.Errorf(response.Error)
+	}
+
+	return nil
 }
 
 // Deregister 注销服务
 func (r *ServiceRegistry) Deregister() error {
-	r.cancel()
-	return r.discovery.Deregister(r.service)
+	conn, err := net.Dial("tcp", "localhost:8080") // 替换为实际的服务发现地址
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	msg := Message{Type: Deregister, Service: r.service}
+	if err := json.NewEncoder(conn).Encode(msg); err != nil {
+		return err
+	}
+
+	var response Message
+	if err := json.NewDecoder(conn).Decode(&response); err != nil {
+		return err
+	}
+
+	if response.Error != "" {
+		return fmt.Errorf(response.Error)
+	}
+
+	return nil
 }
 
 // UpdateStatus 更新服务状态
@@ -170,4 +215,37 @@ func (r *ServiceRegistry) GetServiceInfo() *ServiceInfo {
 	r.mutex.RLock()
 	defer r.mutex.RUnlock()
 	return r.service
+}
+
+// heartbeat 发送心跳请求
+func (r *ServiceRegistry) heartbeat() {
+	ticker := time.NewTicker(DefaultRefreshInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-r.ctx.Done():
+			return
+		case <-ticker.C:
+			conn, err := net.Dial("tcp", "localhost:8080") // 替换为实际的服务发现地址
+			if err != nil {
+				continue
+			}
+			defer conn.Close()
+
+			msg := Message{Type: Heartbeat, Service: r.service}
+			if err := json.NewEncoder(conn).Encode(msg); err != nil {
+				continue
+			}
+
+			var response Message
+			if err := json.NewDecoder(conn).Decode(&response); err != nil {
+				continue
+			}
+
+			if response.Error != "" {
+				log.Printf("Heartbeat failed: %s", response.Error)
+			}
+		}
+	}
 }
