@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -19,46 +20,24 @@ import (
 	"github.com/google/uuid"
 )
 
-// 新增：异步任务状态枚举
-type AsyncTaskStatus int
-
-const (
-	TaskPending AsyncTaskStatus = iota
-	TaskSuccess
-	TaskFailed
-)
-
 // 新增：异步任务结构体
 type AsyncTask struct {
 	TaskID    string
 	Status    AsyncTaskStatus
 	Result    interface{}
-	Error     error
-	Callback  func(interface{}, error) // 回调函数
-	CreatedAt time.Time
+	Error     error // 新增：存储异步任务错误信息
+	Callback  func(interface{}, error)
+	CreatedAt time.Time // 新增字段（与CallAsync中的赋值一致）
 }
 
-var (
-	connPool *ConnPool
-	// 新增：ServiceDiscovery 单例实例和 sync.Once 变量
-	sdInstance *discovery.ServiceDiscovery
-	sdOnce     sync.Once
-	// 新增：异步任务存储（带锁）声明
-	asyncTasks struct {
-		sync.RWMutex
-		tasks map[string]*AsyncTask
-	}
+// 新增：补全AsyncTaskStatus类型定义（假设为枚举）
+type AsyncTaskStatus int
+
+const (
+	TaskPending AsyncTaskStatus = iota
+	TaskSuccess
+	TaskFailed // 新增枚举值（与CallAsync中的状态更新一致）
 )
-
-// 获取 ServiceDiscovery 单例实例的函数
-// 获取 ServiceDiscovery 单例实例的函数
-func GetServiceDiscovery() *discovery.ServiceDiscovery {
-	sdOnce.Do(func() {
-		// 移除对 ETCDEndpoints 的引用，直接调用无参数的 GetInstance()
-		sdInstance = discovery.GetInstance()
-	})
-	return sdInstance
-}
 
 // 初始化协程池和异步任务存储
 func init() {
@@ -68,51 +47,11 @@ func init() {
 	asyncTasks.tasks = make(map[string]*AsyncTask)
 }
 
-// 新增：异步任务提交方法（替代原有同步调用）
-func CallAsync(method string, params map[string]interface{}, callback func(interface{}, error)) string {
-	taskID := uuid.New().String()
-	task := &AsyncTask{
-		TaskID:    taskID,
-		Status:    TaskPending,
-		Callback:  callback,
-		CreatedAt: time.Now(),
-	}
-
-	asyncTasks.Lock()
-	asyncTasks.tasks[taskID] = task
-	asyncTasks.Unlock()
-
-	workerPool.Submit(func() {
-		// 模拟耗时操作（实际应调用服务逻辑）
-		time.Sleep(2 * time.Second)
-
-		// 假设调用结果
-		result, err := callPythonIpcService(method, params)
-
-		// 更新任务状态
-		asyncTasks.Lock()
-		task.Status = TaskSuccess
-		if err != nil {
-			task.Status = TaskFailed
-			task.Error = err
-		}
-		task.Result = result
-		asyncTasks.Unlock()
-
-		// 执行回调
-		if task.Callback != nil {
-			task.Callback(result, err)
-		}
-	})
-
-	return taskID
-}
-
 // 新增：轮询任务结果接口
 func handleAsyncResult(w http.ResponseWriter, r *http.Request) {
 	var req struct{ TaskID string }
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "无效请求", 400)
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
@@ -121,7 +60,7 @@ func handleAsyncResult(w http.ResponseWriter, r *http.Request) {
 	asyncTasks.RUnlock()
 
 	if !exists {
-		http.Error(w, "任务不存在", 404)
+		http.Error(w, "任务不存在", http.StatusNotFound)
 		return
 	}
 
@@ -131,89 +70,6 @@ func handleAsyncResult(w http.ResponseWriter, r *http.Request) {
 		"result":  task.Result,
 		"error":   task.Error,
 	})
-}
-
-func main() {
-	// 加载配置文件（提升到main函数顶部，避免重复加载）
-	var cfg config.GlobalConfig
-	if err := loader.LoadFromFile("config/default.yml", &cfg); err != nil {
-		fmt.Printf("加载配置文件失败: %v\n", err)
-		os.Exit(1)
-	}
-
-	// 初始化全局配置（修正：完整赋值IPC和HTTP配置）
-	var globalCfg config.GlobalConfig
-	globalCfg.IPC = cfg.IPC   // 从config.Config获取IPC配置
-	globalCfg.HTTP = cfg.HTTP // 从config.Config获取HTTP配置
-	config.Update(globalCfg)
-
-	// 在配置加载完成后初始化连接池
-	connPool = NewConnPool()
-
-	// 获取 ServiceDiscovery 单例实例并启动服务发现
-
-	serverCfg := config.Get().HTTP // HTTP服务配置
-
-	// 注册 Go 测试函数（供 Python 调用）
-	RegisterService("go.service.test", func(params map[string]interface{}) (interface{}, error) {
-		return fmt.Sprintf("Go 测试函数返回：%v", params["input"]), nil
-	})
-
-	// 启动 IPC 服务（修正：使用IPC配置参数）
-	go func() {
-		fmt.Println("正在启动 IPC 服务...")
-		ipcCfg := config.Get().IPC                                // 获取IPC配置
-		ipcAddr := fmt.Sprintf("%s:%d", ipcCfg.Host, ipcCfg.Port) // 使用IPC配置中的host和port
-		if err := StartIpcServer(ipcAddr); err != nil {
-			fmt.Printf("IPC 服务启动失败: %v\n", err)
-			os.Exit(1)
-		}
-	}()
-
-	// 等待 IPC 服务启动
-	time.Sleep(time.Second)
-
-	// 处理 HTTP 请求
-	http.HandleFunc("/trigger", func(w http.ResponseWriter, r *http.Request) {
-		var req struct{ Input string }
-		err := json.NewDecoder(r.Body).Decode(&req)
-		if err != nil {
-			http.Error(w, "无效的请求体", 400)
-			return
-		}
-
-		pythonResult, err := callPythonIpcService("python.service.demo", map[string]interface{}{"input": req.Input})
-		if err != nil {
-			http.Error(w, err.Error(), 500)
-			return
-		}
-
-		if pythonResult == nil {
-			http.Error(w, "Python 服务返回空结果", 500)
-			return
-		}
-
-		result, ok := pythonResult.(map[string]interface{})
-		if !ok {
-			http.Error(w, fmt.Sprintf("Python 响应类型错误，预期 map[string]interface{}，实际类型：%T", pythonResult), 500)
-			return
-		}
-
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"message": "HTTP 请求处理完成",
-			"result":  result,
-		})
-	})
-
-	// 移除文件上传路由
-	// http.HandleFunc("/upload", handleFileUpload)
-
-	fmt.Printf("HTTP 服务启动，监听地址 %s:%d\n", serverCfg.Host, serverCfg.Port)
-	// 注册异步结果轮询路由
-	http.HandleFunc("/async_result", handleAsyncResult)
-
-	// 使用配置中的地址和端口
-	http.ListenAndServe(fmt.Sprintf("%s:%d", serverCfg.Host, serverCfg.Port), nil)
 }
 
 // 修改IPC调用函数，使用连接池和压缩
@@ -369,4 +225,288 @@ func callPythonIpcService(method string, params map[string]interface{}) (interfa
 	}
 
 	return response["result"], nil
+}
+
+// 初始化协程池和异步任务存储
+func init() {
+	workerPool = NewWorkerPool(100)
+	// 移除连接池初始化逻辑
+	// 初始化异步任务存储
+	asyncTasks.tasks = make(map[string]*AsyncTask)
+}
+func parseTime(timeStr string) time.Time {
+	t, err := time.Parse(time.RFC3339, timeStr)
+	if err != nil {
+		return time.Now().Add(30 * time.Second)
+	}
+	return t
+}
+
+// 保留唯一的main函数实现
+func main() {
+	// 合并所有重复main函数的有效逻辑
+	// 加载配置文件（提升到main函数顶部，避免重复加载）
+	var cfg config.GlobalConfig
+	if err := loader.LoadFromFile("config/default.yml", &cfg); err != nil {
+		fmt.Printf("加载配置文件失败: %v\n", err)
+		os.Exit(1)
+	}
+
+	// 初始化全局配置（修正：完整赋值IPC和HTTP配置）
+	var globalCfg config.GlobalConfig
+	globalCfg.IPC = cfg.IPC   // 从config.Config获取IPC配置
+	globalCfg.HTTP = cfg.HTTP // 从config.Config获取HTTP配置
+	config.Update(globalCfg)
+
+	// 在配置加载完成后初始化连接池
+	connPool = NewConnPool()
+
+	// 获取 ServiceDiscovery 单例实例并启动服务发现
+	serverCfg := config.Get().HTTP // HTTP服务配置
+
+	// 注册 Go 测试函数（供 Python 调用）
+	RegisterService("go.service.test", func(params map[string]interface{}) (interface{}, error) {
+		return fmt.Sprintf("Go 测试函数返回：%v", params["input"]), nil
+	})
+
+	// 新增：注册服务发现处理函数
+	RegisterService("register", func(params map[string]interface{}) (interface{}, error) {
+		// 解析服务参数
+		serviceInfo, ok := params["service"].(map[string]interface{})
+		if !ok {
+			return nil, fmt.Errorf("invalid service information format")
+		}
+
+		// 使用辅助函数安全获取字段值
+		id, err := getStringField(serviceInfo, "id")
+		if err != nil {
+			return nil, fmt.Errorf("invalid id field: %v", err)
+		}
+
+		name, err := getStringField(serviceInfo, "name")
+		if err != nil {
+			return nil, fmt.Errorf("invalid name field: %v", err)
+		}
+
+		address, err := getStringField(serviceInfo, "address")
+		if err != nil {
+			return nil, fmt.Errorf("invalid address field: %v", err)
+		}
+
+		portVal, err := getFloatField(serviceInfo, "port")
+		if err != nil {
+			return nil, fmt.Errorf("invalid port field: %v", err)
+		}
+		port := int(portVal)
+
+		status, err := getStringField(serviceInfo, "status")
+		if err != nil {
+			return nil, fmt.Errorf("invalid status field: %v", err)
+		}
+
+		expireAtStr, err := getStringField(serviceInfo, "expire_at")
+		if err != nil {
+			return nil, fmt.Errorf("invalid expire_at field: %v", err)
+		}
+
+		updatedAtStr, err := getStringField(serviceInfo, "updated_at")
+		if err != nil {
+			return nil, fmt.Errorf("invalid updated_at field: %v", err)
+		}
+
+		// 安全转换metadata类型
+		metadata := convertMetadata(serviceInfo["metadata"])
+
+		// 转换为Service结构体
+		service := &discovery.Service{
+			ID:        id,
+			Name:      name,
+			Address:   address,
+			Port:      port,
+			Metadata:  metadata,
+			Status:    status,
+			ExpireAt:  parseTime(expireAtStr),
+			UpdatedAt: parseTime(updatedAtStr),
+		}
+
+		// 使用服务发现组件注册服务
+		sd := GetServiceDiscovery()
+		if err := sd.Register(context.Background(), service); err != nil {
+			return nil, fmt.Errorf("service registration failed: %v", err)
+		}
+
+		// 返回注册成功的服务ID
+		return map[string]string{"id": service.ID}, nil
+	})
+
+	// 新增：时间解析辅助函数
+	// Time parsing helper function
+	// 将parseTime函数移至main函数外部
+
+	// 启动 IPC 服务（修正：使用IPC配置参数）
+	go func() {
+		fmt.Println("正在启动 IPC 服务...")
+		ipcCfg := config.Get().IPC                                // 获取IPC配置
+		ipcAddr := fmt.Sprintf("%s:%d", ipcCfg.Host, ipcCfg.Port) // 使用IPC配置中的host和port
+		if err := StartIpcServer(ipcAddr); err != nil {
+			fmt.Printf("IPC 服务启动失败: %v\n", err)
+			os.Exit(1)
+		}
+	}()
+
+	// 等待 IPC 服务启动
+	time.Sleep(time.Second)
+
+	// 处理 HTTP 请求
+	http.HandleFunc("/trigger", func(w http.ResponseWriter, r *http.Request) {
+		var req struct{ Input string }
+		err := json.NewDecoder(r.Body).Decode(&req)
+		if err != nil {
+			http.Error(w, "无效的请求体", 400)
+			return
+		}
+
+		pythonResult, err := callPythonIpcService("python.service.demo", map[string]interface{}{"input": req.Input})
+		if err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
+
+		if pythonResult == nil {
+			http.Error(w, "Python 服务返回空结果", 500)
+			return
+		}
+
+		result, ok := pythonResult.(map[string]interface{})
+		if !ok {
+			http.Error(w, fmt.Sprintf("Python 响应类型错误，预期 map[string]interface{}，实际类型：%T", pythonResult), 500)
+			return
+		}
+
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"message": "HTTP 请求处理完成",
+			"result":  result,
+		})
+	})
+
+	// 注册异步结果轮询路由
+	http.HandleFunc("/async_result", handleAsyncResult)
+
+	// 使用配置中的地址和端口启动HTTP服务
+	fmt.Printf("HTTP 服务启动，监听地址 %s:%d\n", serverCfg.Host, serverCfg.Port)
+	http.ListenAndServe(fmt.Sprintf("%s:%d", serverCfg.Host, serverCfg.Port), nil)
+}
+
+var (
+	connPool *ConnPool
+	// 修正：使用实际存在的 Discovery 类型
+	sdInstance *discovery.Discovery
+	sdOnce     sync.Once
+	// 新增：异步任务存储（带锁）声明
+	asyncTasks struct {
+		sync.RWMutex
+		tasks map[string]*AsyncTask
+	}
+)
+
+// 获取 ServiceDiscovery 单例实例的函数
+func GetServiceDiscovery() *discovery.Discovery {
+	sdOnce.Do(func() {
+		// 使用discovery.New创建实例（需传入Storage实现，如InMemoryStorage）
+		storage := discovery.NewInMemoryStorage()
+		sdInstance = discovery.New(storage)
+	})
+	return sdInstance
+}
+
+// 初始化协程池和异步任务存储
+func init() {
+	workerPool = NewWorkerPool(100)
+	// 移除连接池初始化逻辑
+	// 初始化异步任务存储
+	asyncTasks.tasks = make(map[string]*AsyncTask)
+}
+
+// 新增：异步任务提交方法（替代原有同步调用）
+func CallAsync(method string, params map[string]interface{}, callback func(interface{}, error)) string {
+	taskID := uuid.New().String()
+	task := &AsyncTask{
+		TaskID:    taskID,
+		Status:    TaskPending,
+		Callback:  callback,
+		CreatedAt: time.Now(),
+	}
+
+	asyncTasks.Lock()
+	asyncTasks.tasks[taskID] = task
+	asyncTasks.Unlock()
+
+	workerPool.Submit(func() {
+		// 模拟耗时操作（实际应调用服务逻辑）
+		time.Sleep(2 * time.Second)
+
+		// 假设调用结果
+		result, err := callPythonIpcService(method, params)
+
+		// 更新任务状态
+		asyncTasks.Lock()
+		task.Status = TaskSuccess
+		if err != nil {
+			task.Status = TaskFailed
+			task.Error = err
+		}
+		task.Result = result
+		asyncTasks.Unlock()
+
+		// 执行回调
+		if task.Callback != nil {
+			task.Callback(result, err)
+		}
+	})
+
+	return taskID
+}
+
+// 将interface{}转换为map[string]string
+func convertMetadata(metadata interface{}) map[string]string {
+    result := make(map[string]string)
+    if metadata == nil {
+        return result
+    }
+    
+    metaMap, ok := metadata.(map[string]interface{})
+    if !ok {
+        return result
+    }
+    
+    for k, v := range metaMap {
+        strValue, _ := v.(string)
+        result[k] = strValue
+    }
+    return result
+}
+
+// 添加辅助函数用于安全类型转换
+func getStringField(data map[string]interface{}, key string) (string, error) {
+    value, exists := data[key]
+    if !exists {
+        return "", fmt.Errorf("missing required field: %s", key)
+    }
+    strValue, ok := value.(string)
+    if !ok {
+        return "", fmt.Errorf("field %s is not a string", key)
+    }
+    return strValue, nil
+}
+
+func getFloatField(data map[string]interface{}, key string) (float64, error) {
+    value, exists := data[key]
+    if !exists {
+        return 0, fmt.Errorf("missing required field: %s", key)
+    }
+    floatValue, ok := value.(float64)
+    if !ok {
+        return 0, fmt.Errorf("field %s is not a number", key)
+    }
+    return floatValue, nil
 }

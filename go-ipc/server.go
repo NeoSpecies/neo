@@ -5,8 +5,10 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"go-ipc/discovery"
 	"hash/crc32" // 替换为正确包名
 	"io"         // 新增 io 包导入
+	"log"
 	"net"
 	"sync"
 )
@@ -69,6 +71,10 @@ func sendErrorResponse(conn net.Conn, errorMsg string) {
 }
 
 // 处理连接（协议解析核心）
+// 新增：服务发现实例（假设通过依赖注入获取）
+var discoveryInstance *discovery.Discovery
+
+// 修改handleConnection函数，处理服务注册请求
 func handleConnection(conn net.Conn) {
 	defer conn.Close()
 
@@ -189,18 +195,25 @@ func handleConnection(conn net.Conn) {
 		err = fmt.Errorf("service %s not found", method)
 	}
 
-	// 10. 返回响应（保持原有逻辑）
-	response, errMarshal := json.Marshal(map[string]interface{}{
+	// 10. 返回响应（修改为包含 msgID）
+	responseData := map[string]interface{}{
 		"msg_id": msgID,
 		"result": result,
-		"error":  err,
-	})
+	}
+	// 显式处理错误字段
+	if err != nil {
+		responseData["error"] = err.Error()
+	} else {
+		responseData["error"] = nil  // 确保无错误时显式设置为null
+	}
+
+	response, errMarshal := json.Marshal(responseData)
 	if errMarshal != nil {
 		sendErrorResponse(conn, fmt.Sprintf(`{"error_code": 4018, "error_msg": "response serialization failed: %v"}`, errMarshal))
 		return
 	}
 
-	// 构造响应头
+	// 构造响应头（保持原有逻辑）
 	header := make([]byte, 0)
 	header = binary.BigEndian.AppendUint16(header, magicNumber)
 	header = append(header, version)
@@ -227,4 +240,26 @@ func readUint32(reader io.Reader) (uint32, error) {
 	var num uint32
 	err := binary.Read(reader, binary.BigEndian, &num)
 	return num, err
+}
+
+func handleRequest(conn net.Conn) {
+	// 解析客户端请求（假设请求格式包含msg_id）
+	var req struct {
+		MsgID string `json:"msg_id"`
+	}
+	if err := json.NewDecoder(conn).Decode(&req); err != nil {
+		// 错误处理...
+	}
+	msgID := req.MsgID
+	// 返回成功响应
+	responseData, _ := json.Marshal(map[string]interface{}{
+		"msg_id": msgID,
+		"result": "服务注册成功",
+	})
+	// 发送响应到客户端
+	_, err := conn.Write(responseData)
+	if err != nil {
+		log.Printf("发送响应失败: %v", err)
+	}
+	return
 }
