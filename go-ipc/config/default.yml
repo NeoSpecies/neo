@@ -18,19 +18,13 @@ pool:
 
 # 合并后的服务发现配置
 discovery:
-  storage: "multicast"  # 改为多播模式
+  storage: "memory"  # 使用内存存储模式（IPC服务发现）
   ttl: 10
   refresh_interval: 3
   service_prefix: "/services"
   service_key: "default_key"
-  multicast:
-    address: "224.0.0.1:5300"  # 新增多播地址配置（若不存在需添加）
-    ttl: 2  # 与Python脚本的TTL一致
-
-# 文件存储配置(当storage为file时生效)
+  # 文件存储配置(当storage为file时生效)
   file_path: "/var/lib/go-ipc/services.json"
-  # 多播配置(当storage为multicast时生效)
-  multicast_addr: "224.0.0.1:5300"
 
 # 新增协议配置
 protocol:
