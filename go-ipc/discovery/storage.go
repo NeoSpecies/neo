@@ -3,6 +3,7 @@ package discovery
 import (
 	"context"
 	"errors"
+	"log"
 	"sync"
 	"time"
 )
@@ -22,10 +23,13 @@ func NewInMemoryStorage() *InMemoryStorage {
 
 // Register 注册服务
 func (s *InMemoryStorage) Register(ctx context.Context, service *Service) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.services[service.ID] = service
-	return nil
+    s.mu.Lock()
+    defer s.mu.Unlock()
+    s.services[service.ID] = service
+    // 新增：打印注册的服务信息
+    log.Printf("服务已注册: ID=%s, Name=%s, Address=%s:%d, Status=%s, ExpiresAt=%v",
+        service.ID, service.Name, service.Address, service.Port, service.Status, service.ExpireAt)
+    return nil
 }
 
 // Deregister 注销服务
@@ -51,6 +55,7 @@ func (s *InMemoryStorage) Get(ctx context.Context, serviceID string) (*Service, 
 }
 
 // List 按名称列表服务
+// 在List方法中添加日志
 func (s *InMemoryStorage) List(ctx context.Context, serviceName string) ([]*Service, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -58,6 +63,7 @@ func (s *InMemoryStorage) List(ctx context.Context, serviceName string) ([]*Serv
 	for _, service := range s.services {
 		if service.Name == serviceName && service.ExpireAt.After(time.Now()) {
 			result = append(result, service)
+			log.Printf("Registered service: %+v\n", service) // 添加此行
 		}
 	}
 	return result, nil

@@ -1,258 +1,134 @@
-import etcd3
 import asyncio
 import logging
 from typing import Dict, List, Optional, Any
-from dataclasses import dataclass
-import json
-import time
-import os
-from concurrent.futures import ThreadPoolExecutor
+from .protocol import pack_message, unpack_response, IPCProtocolError
 
 logger = logging.getLogger(__name__)
 
-# 从环境变量获取 etcd 配置
-ETCD_PREFIX = os.getenv("ETCD_PREFIX", "/services")
-
-@dataclass
 class ServiceInfo:
-    """服务信息"""
-    name: str                # 服务名称
-    id: str                  # 服务实例ID
-    host: str               # 主机地址
-    port: int               # 端口
-    metadata: Dict[str, Any] # 元数据
-    version: str = "1.0.0"   # 服务版本
-    weight: int = 100        # 服务权重
-    
+    """服务信息数据类"""
+    def __init__(self, **kwargs):
+        self.id: str = kwargs.get('id', '')
+        self.name: str = kwargs.get('name', '')
+        self.address: str = kwargs.get('address', '')
+        self.port: int = kwargs.get('port', 0)
+        self.metadata: Dict[str, str] = kwargs.get('metadata', {})
+        self.status: str = kwargs.get('status', 'unknown')
+        self.expire_at: str = kwargs.get('expire_at', '')
+        self.updated_at: str = kwargs.get('updated_at', '')
+
     def to_dict(self) -> Dict[str, Any]:
-        """转换为字典"""
-        return {
-            'name': self.name,
+        result = {
             'id': self.id,
-            'host': self.host,
+            'name': self.name,
+            'address': self.address,
             'port': self.port,
+            'expire_at': self.expire_at,
+            'updated_at': self.updated_at,
             'metadata': self.metadata,
-            'version': self.version,
-            'weight': self.weight
+            'status': self.status  # 新增：添加status字段
         }
-    
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'ServiceInfo':
-        """从字典创建实例"""
-        return cls(**data)
+        # 新增：验证关键字段
+        required_fields = ['id', 'name', 'address', 'port', 'expire_at', 'status']  # 补充status到必填项检查
+        for field in required_fields:
+            if field not in result or result[field] is None:
+                logger.warning(f"服务信息缺少必要字段: {field}")
+        return result
 
 class ServiceDiscovery:
-    """服务发现核心"""
-    
-    def __init__(self, 
-                 host: str = 'localhost',
-                 port: int = 2379,
-                 timeout: float = 5.0,
-                 executor: Optional[ThreadPoolExecutor] = None):
-        """
-        初始化服务发现
-        
-        Args:
-            host: etcd 主机地址
-            port: etcd 端口
-            timeout: 操作超时时间
-            executor: 线程池执行器
-        """
-        self.client = etcd3.client(host=host, port=port, timeout=timeout)
-        self.executor = executor or ThreadPoolExecutor(max_workers=1)
-        self._watchers = {}  # 服务监听器
-        self._cache = {}     # 服务缓存
-        self._stopped = False
-    
-    async def register_service(self, service: ServiceInfo, ttl: int = 10) -> bool:
-        """
-        注册服务
-        
-        Args:
-            service: 服务信息
-            ttl: 租约时间（秒）
-            
-        Returns:
-            注册是否成功
-        """
+    """基于IPC的服务发现客户端"""
+    def __init__(self, ipc_host: str = '127.0.0.1', ipc_port: int = 9090):
+        self.ipc_host = ipc_host
+        self.ipc_port = ipc_port
+        self._reader: Optional[asyncio.StreamReader] = None
+        self._writer: Optional[asyncio.StreamWriter] = None
+
+    async def _connect(self) -> None:
+        """建立IPC连接"""
         try:
-            # 创建租约
-            lease = await self._run_in_executor(
-                self.client.lease,
-                ttl
+            self._reader, self._writer = await asyncio.open_connection(
+                self.ipc_host, self.ipc_port
             )
-            
-            # 注册服务，使用与 Go 服务相同的前缀
-            key = f"{ETCD_PREFIX}/{service.name}/{service.id}"
-            value = json.dumps(service.to_dict())
-            
-            success = await self._run_in_executor(
-                self.client.put,
-                key,
-                value,
-                lease=lease
-            )
-            
-            if success:
-                logger.info(
-                    f"Registered service: {service.name} "
-                    f"(id={service.id}, ttl={ttl}s)"
-                )
-                
-                # 启动续约任务
-                asyncio.create_task(self._keep_alive(lease, service))
-                return True
-            
-            return False
-            
+            logger.info(f"已连接到IPC服务: {self.ipc_host}:{self.ipc_port}")
         except Exception as e:
-            logger.error(f"Failed to register service: {e}")
-            return False
-    
-    async def deregister_service(self, service: ServiceInfo) -> bool:
-        """
-        注销服务
-        
-        Args:
-            service: 服务信息
-            
-        Returns:
-            注销是否成功
-        """
+            raise IPCProtocolError(f"IPC连接失败: {str(e)}")
+
+    async def _send_request(self, method: str, params: Dict[str, Any]) -> Dict[str, Any]:
+        """发送IPC请求并处理响应"""
         try:
-            key = f"{ETCD_PREFIX}/{service.name}/{service.id}"
-            success = await self._run_in_executor(
-                self.client.delete,
-                key
-            )
+            if not self._writer or self._reader.at_eof():
+                await self._connect()
             
-            if success:
-                logger.info(
-                    f"Deregistered service: {service.name} "
-                    f"(id={service.id})"
-                )
-            return success
+            # 打包并发送请求
+            packed_data = await pack_message(method, params)
+            self._writer.write(packed_data)
+            await self._writer.drain()
             
-        except Exception as e:
-            logger.error(f"Failed to deregister service: {e}")
+            # 读取响应
+            response_data = await self._reader.read(4096)
+            if not response_data:
+                raise IPCProtocolError("未收到响应数据")
+            
+            return await unpack_response(response_data)
+        except ConnectionRefusedError:
+            raise IPCProtocolError(f"无法连接到服务端 {self.ipc_host}:{self.ipc_port}")
+        except asyncio.TimeoutError:
+            raise IPCProtocolError("请求超时")
+
+    async def register_service(self, service: ServiceInfo) -> bool:
+        """注册服务到IPC服务发现"""
+        try:
+            logger.info(f"开始注册服务: {service.name} (ID: {service.id})")
+            response = await self._send_request('register', {
+                'action': 'register',
+                'service': service.to_dict(),
+                'name': service.name,
+                'id': service.id
+            })
+            
+            # 新增：记录完整响应日志
+            logger.debug(f"服务注册响应: {response}")
+            
+            if response.get('error'):
+                logger.error(f"服务端返回错误: {response['error']}")
+                return False
+            logger.info(f"服务注册成功: {service.name}")
+            return True
+        except IPCProtocolError as e:
+            logger.error(f"服务注册失败: {str(e)} (服务名: {service.name}, ID: {service.id})")
             return False
-    
+        # 新增：捕获其他可能的异常
+        except Exception as e:
+            logger.exception(f"注册服务时发生未预期错误: {str(e)}")
+            return False
+
+    async def deregister_service(self, service_id: str) -> bool:
+        """从IPC服务发现注销服务"""
+        try:
+            response = await self._send_request('deregister', {
+                'id': service_id
+            })
+            return response.get('error') is None
+        except IPCProtocolError as e:
+            logger.error(f"服务注销失败: {str(e)}")
+            return False
+
     async def discover_service(self, service_name: str) -> List[ServiceInfo]:
-        """
-        发现服务
-        
-        Args:
-            service_name: 服务名称
-            
-        Returns:
-            服务实例列表
-        """
+        """发现指定名称的服务"""
         try:
-            # 先查询缓存
-            if service_name in self._cache:
-                return self._cache[service_name]
-            
-            # 从 etcd 查询，使用与 Go 服务相同的前缀
-            prefix = f"{ETCD_PREFIX}/{service_name}/"
-            response = await self._run_in_executor(
-                self.client.get_prefix,
-                prefix
-            )
-            
-            services = []
-            for value, _ in response:
-                if value:
-                    data = json.loads(value.decode())
-                    services.append(ServiceInfo.from_dict(data))
-            
-            # 更新缓存
-            self._cache[service_name] = services
-            
-            # 启动监听
-            if service_name not in self._watchers:
-                asyncio.create_task(
-                    self._watch_service(service_name)
-                )
-            
-            return services
-            
-        except Exception as e:
-            logger.error(f"Failed to discover service: {e}")
+            response = await self._send_request('discover', {
+                'name': service_name
+            })
+            if 'result' in response and isinstance(response['result'], list):
+                return [ServiceInfo(**item) for item in response['result']]
             return []
-    
-    async def _keep_alive(self, lease: Any, service: ServiceInfo):
-        """
-        保持租约活跃
-        
-        Args:
-            lease: 租约对象
-            service: 服务信息
-        """
-        while not self._stopped:
-            try:
-                # 续约
-                await self._run_in_executor(
-                    self.client.refresh_lease,
-                    lease
-                )
-                await asyncio.sleep(1)  # 每秒续约一次
-                
-            except Exception as e:
-                logger.error(f"Failed to refresh lease: {e}")
-                # 重新注册服务
-                await self.register_service(service)
-                break
-    
-    async def _watch_service(self, service_name: str):
-        """
-        监听服务变化
-        
-        Args:
-            service_name: 服务名称
-        """
-        prefix = f"{ETCD_PREFIX}/{service_name}/"
-        
-        while not self._stopped:
-            try:
-                # 创建监听器
-                events_iterator = self.client.watch_prefix(prefix)
-                self._watchers[service_name] = events_iterator
-                
-                # 处理事件
-                for event in events_iterator:
-                    if self._stopped:
-                        break
-                        
-                    # 更新缓存
-                    await self.discover_service(service_name)
-                    
-                    # 记录变更
-                    if event.value:
-                        data = json.loads(event.value.decode())
-                        service = ServiceInfo.from_dict(data)
-                        logger.info(
-                            f"Service changed: {service.name} "
-                            f"(id={service.id})"
-                        )
-                    
-            except Exception as e:
-                logger.error(f"Watch error: {e}")
-                await asyncio.sleep(1)  # 等待后重试
-    
-    async def _run_in_executor(self, func, *args, **kwargs):
-        """在线程池中执行同步操作"""
-        return await asyncio.get_event_loop().run_in_executor(
-            self.executor,
-            func,
-            *args,
-            **kwargs
-        )
-    
-    def close(self):
-        """关闭服务发现"""
-        self._stopped = True
-        for watcher in self._watchers.values():
-            watcher.close()
-        self._watchers.clear()
-        self._cache.clear()
-        self.executor.shutdown() 
+        except IPCProtocolError as e:
+            logger.error(f"服务发现失败: {str(e)}")
+            return []
+
+    def close(self) -> None:
+        """关闭IPC连接"""
+        if self._writer:
+            self._writer.close()
+            self._writer = None
+        self._reader = None

@@ -8,6 +8,10 @@ import os  # 确保已导入 os（文件处理需要）
 import base64  # 将base64导入移至文件顶部，规范代码结构
 import io  # 新增：用于构造请求
 from client import IpcClient  # 新增导入语句
+# 新增：导入服务注册相关模块
+from discovery.registrar import ServiceRegistrar
+from discovery.discovery import ServiceDiscovery
+import asyncio
 
 def python_demo_func(params):
     # print(f"Python 函数接收到参数：{params}")
@@ -180,11 +184,38 @@ def call_go_service(method, params):  # 移除 files 参数
 
 if __name__ == "__main__":
     # 创建并启动 IPC 服务器
-    server = IpcServer(("127.0.0.1", 9091))
+    server = IpcServer(("127.0.0.1", 9091))  # 修复：使用元组传递地址参数
     
     # 注册服务
     server.register("python.service.demo", python_demo_func)
     print("成功注册服务: python.service.demo")
+
+    # 新增：服务注册到Go服务端
+    async def register_with_go_discovery():
+        # 创建服务发现客户端
+        discovery_client = ServiceDiscovery(ipc_host="127.0.0.1", ipc_port=9090)
+        registrar = ServiceRegistrar(discovery_client)
+        
+        # 注册当前Python服务
+        try:
+            service_id = await registrar.register(
+                name="python.service.demo",
+                address="127.0.0.1",
+                port=9091,
+                metadata={"language": "python", "version": "1.0.0"}
+            )
+            print(f"Python服务已成功注册到Go服务端，服务ID: {service_id}")
+        except Exception as e:
+            print(f"服务注册失败: {str(e)}")
+
+    # 在独立线程中运行服务注册
+    import asyncio
+    loop = asyncio.get_event_loop()
+    if loop.is_running():
+        # 如果事件循环已在运行（如某些IDE环境）
+        loop.create_task(register_with_go_discovery())
+    else:
+        loop.run_until_complete(register_with_go_discovery())
 
     # 异步示例调用（需在服务器启动前定义）
     def async_demo():
@@ -224,3 +255,42 @@ if __name__ == "__main__":
                 
         # 示例调用
         client.call_async("go.service.test", {"param": "value"}, async_callback)
+
+# 在服务注册前添加
+async def test_server_connection(registrar):
+    try:
+        # 测试与Go服务端的连接
+        await registrar.discovery._connect()
+        logger.info("成功连接到Go服务端")
+        return True
+    except Exception as e:
+        logger.error(f"无法连接到Go服务端: {str(e)}")
+        return False
+
+# 在注册服务前调用
+async def main():  # 新增：异步主函数
+    # 创建服务注册器
+    registrar = ServiceRegistrar(
+        ipc_host=config.IPC_HOST,
+        ipc_port=config.IPC_PORT,
+        service_info=service_info
+    )
+
+    # 测试连接并注册服务
+    if not await test_server_connection(registrar):
+        logger.error("连接测试失败，无法继续注册服务")
+        return
+    
+    # 执行服务注册
+    await registrar.register()
+
+if __name__ == "__main__":
+    # 原问题：直接在全局作用域使用 await
+    # 修复：通过 asyncio.run() 执行异步主函数
+    asyncio.run(main())
+
+    # 启动IPC服务器（保持原有逻辑）
+    server = IpcServer((config.SERVER_HOST, config.SERVER_PORT))
+    server.register("python.service.demo", python_demo_func)
+    logger.info(f"Python IPC 服务启动，监听 {config.SERVER_HOST}:{config.SERVER_PORT}")
+    server.start()

@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import uuid
+import datetime  # 新增导入
 from typing import Dict, Optional, Any, List, Callable
 from .discovery import ServiceDiscovery, ServiceInfo
 from .health import HealthChecker, HealthCheck, HealthStatus
@@ -27,50 +28,34 @@ class ServiceRegistrar:
     
     async def register(self,
                       name: str,
-                      host: str,
+                      address: str,
                       port: int,
-                      metadata: Optional[Dict[str, Any]] = None,
+                      metadata: Optional[Dict[str, str]] = None,
                       version: str = "1.0.0",
-                      weight: int = 100,
                       checks: Optional[List[Dict[str, Any]]] = None) -> str:
-        """
-        注册服务
-        
-        Args:
-            name: 服务名称
-            host: 服务主机
-            port: 服务端口
-            metadata: 服务元数据
-            version: 服务版本
-            weight: 服务权重
-            checks: 健康检查配置列表，每个配置包含：
-                   - name: 检查名称
-                   - check_func: 检查函数
-                   - config: HealthCheck配置（可选）
-            
-        Returns:
-            服务实例ID
-        """
+        """注册服务并启动健康检查"""
         # 生成服务实例ID
         service_id = str(uuid.uuid4())
-        
-        # 创建服务信息
-        service = ServiceInfo(
-            name=name,
+        now = datetime.datetime.utcnow()
+    
+        # 创建服务信息（与test.py保持一致的字段）
+        service_info = ServiceInfo(
             id=service_id,
-            host=host,
+            name=name,  # 修复：添加参数名称
+            address=address,
             port=port,
             metadata=metadata or {},
-            version=version,
-            weight=weight
-        )
-        
+            status="healthy",
+            expire_at=(now + datetime.timedelta(seconds=30)).isoformat() + "Z",
+            updated_at=now.isoformat() + "Z"
+        )  # 确保此处有闭合括号
+    
         # 注册服务
-        success = await self.discovery.register_service(service)
+        success = await self.discovery.register_service(service_info)
         if not success:
             raise RuntimeError(f"Failed to register service: {name}")
         
-        self._registered_services[service_id] = service
+        self._registered_services[service_id] = service_info  # 将service改为service_info
         
         # 添加健康检查
         if checks:
@@ -129,43 +114,33 @@ class ServiceRegistrar:
         return success
     
     async def _monitor_health(self, service_id: str):
-        """
-        监控服务健康状态
-        
-        Args:
-            service_id: 服务实例ID
-        """
-        if service_id not in self._service_checks:
-            return
-            
+        """监控服务健康状态并同步到IPC服务发现"""
         service = self._registered_services[service_id]
         check_names = self._service_checks[service_id]
         
         while True:
             try:
-                # 检查所有健康检查结果
-                unhealthy = False
-                for check_name in check_names:
-                    result = self.health_checker.get_result(check_name)
-                    if result and result.status == HealthStatus.UNHEALTHY:
-                        unhealthy = True
-                        break
-                
-                # 如果服务不健康，重新注册
-                if unhealthy:
-                    logger.warning(
-                        f"Service unhealthy: {service.name} "
-                        f"(id={service_id})"
-                    )
+                # 检查所有健康检查
+                unhealthy = any(
+                    self.health_checker.get_result(name).status == HealthStatus.UNHEALTHY
+                    for name in check_names
+                )
+
+                # 更新服务状态并同步到服务发现
+                new_status = "unhealthy" if unhealthy else "healthy"
+                if service.status != new_status:
+                    service.status = new_status
+                    service.updated_at = datetime.datetime.utcnow().isoformat() + "Z"
+                    # 通过IPC更新服务状态
                     await self.discovery.register_service(service)
-                
+                    logger.info(f"Service status updated: {service.name} -> {new_status}")
+
+                await asyncio.sleep(5)  # 每5秒检查一次
             except Exception as e:
                 logger.error(f"Health monitor error: {e}")
-                
-            finally:
-                await asyncio.sleep(5)  # 每5秒检查一次
+                await asyncio.sleep(1)
     
     def close(self):
         """关闭服务注册器"""
         self.health_checker.close()
-        self.discovery.close() 
+        self.discovery.close()

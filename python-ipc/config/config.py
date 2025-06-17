@@ -244,3 +244,11 @@ class ConfigManager:
             for watch_id in self._watchers:
                 self._etcd_client.cancel_watch(watch_id)
             self._etcd_client.close()
+
+
+class DiscoveryConfig:
+    def __init__(self, config: Dict[str, Any]):
+        self.type = config.get('type', 'ipc')
+        self.ipc_host = config.get('ipc_host', '127.0.0.1')
+        self.ipc_port = config.get('ipc_port', 9090)
+        self.ttl = config.get('ttl', 30)

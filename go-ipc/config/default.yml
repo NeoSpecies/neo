@@ -24,7 +24,7 @@ discovery:
   service_prefix: "/services"
   service_key: "default_key"
   # 文件存储配置(当storage为file时生效)
-  file_path: "/var/lib/go-ipc/services.json"
+  file_path: "/www/neo/go-ipc/services.json"
 
 # 新增协议配置
 protocol:
