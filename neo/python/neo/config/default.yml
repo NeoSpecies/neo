@@ -1,0 +1,45 @@
+# Python IPC Client 默认配置
+
+# 连接池配置
+pool:
+  min_size: 5
+  max_size: 20
+  connection_timeout: 5.0
+  idle_timeout: 60.0
+  max_lifetime: 3600.0
+  health_check_interval: 30.0
+  balancer_strategy: "weighted_response_time"
+
+# 协议配置
+protocol:
+  version: 1
+  compression_algorithm: "none"  # none, gzip, zstd, lz4
+  max_message_size: 10485760  # 10MB
+  enable_checksum: true
+  enable_tracing: true
+
+# 监控配置
+metrics:
+  enable_prometheus: true
+  prometheus_port: 9090
+  enable_tracing: true
+  tracing_sampler_rate: 0.1
+  metrics_prefix: "ipc"
+
+# 服务发现配置
+discovery:
+  etcd:
+    hosts: 
+      - "localhost"
+    port: 2379
+    prefix: "/config/ipc"
+    timeout: 5.0
+    username: ""
+    password: ""
+  service_ttl: 10
+  refresh_interval: 5.0
+  enable_health_check: true
+
+# 全局配置
+log_level: "INFO"
+environment: "development" 
