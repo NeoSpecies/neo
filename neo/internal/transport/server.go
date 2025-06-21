@@ -13,7 +13,7 @@ import (
 	"hash/crc32"
 	"io"
 
-	// "log"
+	"log"
 	"net"
 	"sync"
 	// "strconv"
@@ -62,12 +62,16 @@ func RegisterService(name string, handler func(map[string]interface{}) (interfac
 }
 
 // 启动 TCP 服务（传输层实现）
-func StartIpcServer(addr string) error {
+// 修改StartIpcServer函数签名，添加启动完成回调
+func StartIpcServer(addr string, onStarted func()) error {
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		return err
 	}
 	fmt.Printf("IPC Server listening on %s\n", addr)
+	if onStarted != nil {
+		onStarted() // 服务器启动成功后调用回调
+	}
 
 	for {
 		conn, err := listener.Accept()
@@ -102,6 +106,22 @@ var discoveryInstance *discovery.Discovery
 
 // 修改handleConnection函数，处理服务注册请求
 func handleConnection(conn net.Conn) {
+    // 立即发送协议魔数 - 删除这行代码
+    // if _, err := conn.Write([]byte{0xAE, 0xBD}); err != nil {
+    //     log.Printf("发送魔数失败: %v", err)
+    //     return
+    // }
+
+    // 确保连接不会被意外关闭
+    defer func() {
+        if r := recover(); r != nil {
+            log.Printf("处理连接时发生panic: %v", r)
+        }
+        conn.Close()
+    }()
+
+	// 先读取并解析参数
+	log.Printf("新连接来自: %s", conn.RemoteAddr())
 	defer conn.Close()
 
 	reader := bufio.NewReader(conn)
@@ -188,6 +208,19 @@ func handleConnection(conn net.Conn) {
 		sendErrorResponse(conn, `{"error_code": 4003, "error_msg": "invalid parameter format"}`)
 		return
 	}
+	// 删除以下错误代码块
+	// 兼容test.py的参数格式
+	// if action, ok := params["action"]; ok && action == "register" {
+	//     if serviceData, ok := params["service"].(map[string]interface{}); ok {
+	//         params = serviceData
+	//     }
+	// }
+	
+	// 保留参数验证，但修改为检查原始params
+	if _, ok := params["service"]; !ok {
+	    sendErrorResponse(conn, `{"error_code": 4010, "error_msg": "missing required field: service"}`)
+	    return
+	}
 	// 拆分追加操作，避免 append 参数过多问题
 	totalData = append(totalData, byte(paramLen>>24))
 	totalData = append(totalData, byte(paramLen>>16))
@@ -239,11 +272,16 @@ func handleConnection(conn net.Conn) {
 		return
 	}
 
-	// 构造响应头（保持原有逻辑）
-	header := make([]byte, 0)
-	header = binary.BigEndian.AppendUint16(header, magicNumber)
-	header = append(header, version)
-	header = binary.BigEndian.AppendUint32(header, uint32(len(response)))
+	// 构造响应头（发送响应头字节错误）
+	// 修改响应头构造逻辑
+	// 构造响应头（修复版本号字节错误）
+	header := make([]byte, 7) // 2字节魔数 + 1字节版本 + 4字节长度 = 7字节
+	// 魔数（2字节大端）
+	binary.BigEndian.PutUint16(header[0:2], MAGIC_NUMBER)
+	// 版本（1字节）
+	header[2] = VERSION
+	// 响应体长度（4字节大端）
+	binary.BigEndian.PutUint32(header[3:7], uint32(len(response)))
 	conn.Write(append(header, response...))
 }
 
@@ -324,3 +362,9 @@ func (p *WorkerPool) Submit(job func()) {
 	p.wg.Add(1)
 	p.jobs <- job
 }
+
+// 协议常量（与test.py完全一致）
+const (
+    MAGIC_NUMBER = 0xAEBD  // 2字节大端魔数
+    VERSION      = 0x01    // 1字节协议版本
+)

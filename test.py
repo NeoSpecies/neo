@@ -59,8 +59,9 @@ def pack_protocol_message(method: str, service_info: dict) -> bytes:
     print(f'打包完成，总长度：{len(buffer)}字节，CRC32: 0x{checksum:X}')
     return bytes(buffer)
 
+# 在register_service函数中添加
 def register_service(sock, service_info):
-    """发送注册请求并解析响应"""
+    print(f'DEBUG: 发送版本字节: {hex(VERSION)}')
     try:
         # 打包并发送请求
         packed_msg = pack_protocol_message('register', service_info)
@@ -80,7 +81,7 @@ def register_service(sock, service_info):
 
         # 2. 读取版本（1字节）
         version_data = sock.recv(1)
-        print(f'接收到版本字节：{version_data.hex()}')  # 新增：打印原始字节
+        print(f'DEBUG: 接收版本原始字节: {version_data.hex()}')
         if len(version_data) != 1:
             raise Exception('接收版本号失败')
         version = version_data[0]
