@@ -40,6 +40,8 @@ type Config struct {
 	MaxErrorCount       int                 // 最大错误次数
 	MaxLatency          time.Duration       // 最大延迟阈值
 	LoadBalance         LoadBalanceStrategy // 负载均衡策略（来自balancer.go）
+	MaxRetryCount       int                 // 连接创建最大重试次数
+	RetryInterval       time.Duration       // 连接重试间隔
 }
 
 // 连接池结构体新增扩缩容阈值配置
@@ -99,6 +101,8 @@ func NewConnectionPool(factory func() (net.Conn, error)) (*ConnectionPool, error
 		InitialSize: cfg.InitialSize,
 		IdleTimeout: time.Duration(cfg.IdleTimeout) * time.Second,
 		// 其他配置项根据需要设置
+		MaxRetryCount: 3,                      // 默认重试3次
+		RetryInterval: 100 * time.Millisecond, // 默认重试间隔100ms
 	}
 
 	if err := validateConfig(config); err != nil {
@@ -147,17 +151,25 @@ func validateConfig(config Config) error {
 
 // createConnection 创建新连接
 func (p *ConnectionPool) createConnection() (*Connection, error) {
-	conn, err := p.factory()
-	if err != nil {
-		return nil, err
-	}
+	var conn net.Conn
+	var err error
 
-	return &Connection{
-		conn:      conn,
-		pool:      p,
-		Stats:     NewConnectionStats(),
-		lastCheck: time.Now(),
-	}, nil
+	// 使用配置的重试参数
+	for i := 0; i < p.config.MaxRetryCount; i++ {
+		conn, err = p.factory()
+		if err == nil {
+			return &Connection{
+				conn:      conn,
+				pool:      p,
+				Stats:     NewConnectionStats(),
+				lastCheck: time.Now(),
+			}, nil
+		}
+		if i < p.config.MaxRetryCount-1 {
+			time.Sleep(p.config.RetryInterval)
+		}
+	}
+	return nil, fmt.Errorf("达到最大重试次数 %d: %v", p.config.MaxRetryCount, err)
 }
 
 // Acquire 获取连接（合并后逻辑）
@@ -309,20 +321,18 @@ func (p *ConnectionPool) performHealthCheck() {
 
 // adjustPoolSize 调整连接池大小
 // AutoAdjust 自动调整连接池大小（修复后）
-func (p *ConnectionPool) AutoAdjust() { // 接收者修正为 *ConnectionPool
+func (p *ConnectionPool) AutoAdjust() {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
 	for range ticker.C {
-		p.mu.Lock() // 加锁保证并发安全
-		defer p.mu.Unlock()
-
-		total := len(p.connections) // 总连接数从 ConnectionPool 的 connections 字段获取
+		p.mu.Lock()
+		total := len(p.connections)
 		if total == 0 {
-			continue // 避免除零错误
+			p.mu.Unlock()
+			continue
 		}
 
-		// 统计活跃连接数（ActiveRequests > 0 的连接）
 		active := 0
 		for _, conn := range p.connections {
 			if conn.Stats.ActiveRequests > 0 {
@@ -330,36 +340,27 @@ func (p *ConnectionPool) AutoAdjust() { // 接收者修正为 *ConnectionPool
 			}
 		}
 
-		// 扩容逻辑：活跃比例 > 扩容阈值 且 未达最大连接数
+		// 扩容逻辑（整合原 maybeResize 功能）
 		if float64(active)/float64(total) > p.config.ScaleUpThreshold && total < p.config.MaxSize {
-			toAdd := min(
-				p.config.ScaleStep,     // 从 config 中获取步长
-				p.config.MaxSize-total, // 不超过最大限制
-			)
+			toAdd := min(p.config.ScaleStep, p.config.MaxSize-total)
 			for i := 0; i < toAdd; i++ {
-				conn, err := p.createConnection() // 使用现有 createConnection 方法创建连接
-				if err == nil {
-					p.connections = append(p.connections, conn) // 添加新连接到连接池
+				// 添加连接创建重试机制
+				var newConn *Connection
+				var err error
+				for retry := 0; retry < 3; retry++ {
+					newConn, err = p.createConnection()
+					if err == nil {
+						break
+					}
+					log.Printf("连接创建失败，重试第 %d 次: %v", retry+1, err)
+					time.Sleep(100 * time.Millisecond)
+				}
+				if newConn != nil {
+					p.connections = append(p.connections, newConn)
 				}
 			}
-			log.Printf("AutoAdjust: 扩容 %d 个连接（活跃比例: %.2f）", toAdd, float64(active)/float64(total))
 		}
-
-		// 缩容逻辑：空闲比例 > 缩容阈值 且 超过最小连接数
-		idle := total - active
-		if float64(idle)/float64(total) > p.config.ScaleDownThreshold && total > p.config.MinSize {
-			toRemove := min(
-				p.config.ScaleStep,     // 从 config 中获取步长
-				total-p.config.MinSize, // 不低于最小限制
-			)
-			for i := 0; i < toRemove; i++ {
-				idx := p.findLeastUsedIdleConnection() // 使用现有方法查找最久未使用的空闲连接
-				if idx >= 0 {
-					p.removeConnection(idx) // 使用现有 removeConnection 方法移除连接
-				}
-			}
-			log.Printf("AutoAdjust: 缩容 %d 个连接（空闲比例: %.2f）", toRemove, float64(idle)/float64(total))
-		}
+		p.mu.Unlock()
 	}
 }
 
@@ -418,23 +419,6 @@ func (p *ConnectionPool) getAvailableConnections() []*Connection {
 		}
 	}
 	return available
-}
-
-// findLeastUsedIdleConnection 查找最少使用的空闲连接
-func (p *ConnectionPool) findLeastUsedIdleConnection() int {
-	var (
-		leastUsed           = -1
-		leastRequests int64 = 1<<63 - 1
-	)
-
-	for i, conn := range p.connections {
-		if conn.Stats.ActiveRequests == 0 && conn.Stats.TotalRequests < leastRequests {
-			leastUsed = i
-			leastRequests = conn.Stats.TotalRequests
-		}
-	}
-
-	return leastUsed
 }
 
 // GetStats 获取连接池统计信息
