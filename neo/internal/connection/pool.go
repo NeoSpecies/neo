@@ -520,7 +520,7 @@ func (p *ConnPool) HealthCheck() {
 
 	for i, conn := range p.idleConns {
 		// 发送心跳包（使用协议定义的HEARTBEAT类型）
-		heartbeat := protocol.NewMessage(protocol.TypeHeartbeat, []byte("ping")) // 使用NewMessage生成带校验和的消息
+		heartbeat := protocol.NewMessage(protocol.TypeHeartbeat, "heartbeat", []byte("ping")) // 使用NewMessage生成带校验和的消息
 		sendTime := time.Now()
 
 		// 发送并等待响应（使用Bytes方法获取字节数据）

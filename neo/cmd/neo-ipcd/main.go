@@ -46,11 +46,9 @@ func main() {
 	serverStarted := make(chan struct{})
 	// 修改：将IPC服务器启动放入goroutine并添加启动回调
 	go func() {
-		err = transport.StartIpcServer(fmt.Sprintf("%s:%d", cfg.IPC.Host, cfg.IPC.Port), func() {
-			close(serverStarted) // 通知服务器已启动
-		})
+		err := transport.StartIpcServer()
 		if err != nil {
-			log.Fatalf("Failed to start IPC server: %v", err)
+			log.Fatalf("启动IPC服务失败: %v", err)
 		}
 	}()
 
@@ -77,36 +75,36 @@ func main() {
 		// 直接从原始params中获取service字段
 		serviceData, ok := params["service"].(map[string]interface{})
 		if !ok || serviceData == nil {
-		    return nil, fmt.Errorf("service字段格式错误或为空")
+			return nil, fmt.Errorf("service字段格式错误或为空")
 		}
-		
+
 		// 从serviceData中提取字段
 		serviceID, ok := serviceData["id"].(string)
 		if !ok {
-		    return nil, fmt.Errorf("缺少服务ID或格式错误")
+			return nil, fmt.Errorf("缺少服务ID或格式错误")
 		}
-		
+
 		serviceName, ok := serviceData["name"].(string)
 		if !ok {
-		    return nil, fmt.Errorf("缺少服务名称或格式错误")
+			return nil, fmt.Errorf("缺少服务名称或格式错误")
 		}
-		
+
 		address, ok := serviceData["address"].(string)
 		if !ok {
-		    return nil, fmt.Errorf("缺少服务地址或格式错误")
+			return nil, fmt.Errorf("缺少服务地址或格式错误")
 		}
-		
+
 		portNum, ok := serviceData["port"].(float64)
 		if !ok {
-		    return nil, fmt.Errorf("缺少服务端口或格式错误")
+			return nil, fmt.Errorf("缺少服务端口或格式错误")
 		}
 		port := int(portNum)
-		
+
 		// 新增：转换metadata类型
 		// 修改注册处理函数中的参数检查
 		metadataIface, ok := serviceData["metadata"].(map[string]interface{}) // 从serviceData获取metadata
 		if !ok || metadataIface == nil {
-		    return nil, fmt.Errorf("metadata格式错误或为空")
+			return nil, fmt.Errorf("metadata格式错误或为空")
 		}
 		metadata := make(map[string]string)
 		for k, v := range metadataIface {

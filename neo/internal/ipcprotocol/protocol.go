@@ -1,11 +1,10 @@
-package protocol
+package ipcprotocol
 
 import (
-	"bytes"
 	"encoding/binary"
-	"errors" // 添加 errors 包导入
+	"errors"
+	"fmt"
 	"hash/crc32"
-	"time"
 
 	"github.com/google/uuid"
 )
@@ -14,7 +13,7 @@ const (
 	// Protocol versions
 	ProtocolVersion1 = 1
 
-	// Message types
+	// Message types - 客户端不使用此字段，暂时保留但不序列化
 	TypeRequest   = 1
 	TypeResponse  = 2
 	TypeHeartbeat = 3
@@ -23,178 +22,245 @@ const (
 	// Max message size
 	MaxMessageSize = 1024 * 1024 * 10 // 10MB
 
-	// Header size
-	HeaderSize = 32 // Fixed header size
+	// 协议常量与test.py完全一致
+	MAGIC_NUMBER = 0xAEBD // 2字节大端魔数
+	VERSION      = 0x01   // 1字节协议版本
+	HeaderSize   = 15     // 修正为15字节 (2+1+2+2+4+4)
 )
 
-// MessageHeader represents the protocol header
+// MessageHeader 修正为与test.py完全一致的协议头部
 type MessageHeader struct {
-	Version         uint8           // Protocol version
-	Type            uint8           // Message type
-	CompressionType CompressionType // Compression algorithm
-	RequestID       uint64          // Unique request ID
-	PayloadSize     uint32          // Original payload size
-	CompressedSize  uint32          // Compressed payload size
-	Timestamp       int64           // Message timestamp
-	Priority        uint8           // Message priority
-	Checksum        uint32          // CRC32 checksum
-	TraceID         [16]byte        // UUID for tracing
-	RetryCount      uint8           // Retry count
+	Magic     uint16 // 协议魔数 (0xAEBD)
+	Version   uint8  // 协议版本
+	MsgIDLen  uint16 // 消息ID长度
+	MethodLen uint16 // 方法名长度
+	ParamLen  uint32 // 参数长度
+	Checksum  uint32 // CRC32校验和
 }
 
 // Message represents a complete protocol message
 type Message struct {
 	Header  MessageHeader
-	Payload []byte
+	Payload []byte // 包含: 消息ID内容 + 方法名内容 + 参数内容
 }
 
-// NewMessage creates a new protocol message
-func NewMessage(msgType uint8, payload []byte) *Message {
-	traceID, _ := uuid.New().MarshalBinary()
-	var traceBytes [16]byte
-	copy(traceBytes[:], traceID)
+// NewMessage 创建符合test.py协议的消息
+func NewMessage(msgType uint8, method string, payload []byte) *Message {
+	// 生成UUID作为消息ID
+	msgID := uuid.New().String()
+	msgIDBytes := []byte(msgID)
+	msgIDLen := uint16(len(msgIDBytes))
 
-	msg := &Message{
+	// 方法名字节
+	methodBytes := []byte(method)
+	methodLen := uint16(len(methodBytes))
+
+	// 参数长度
+	paramLen := uint32(len(payload))
+
+	// 构建完整Payload (消息ID内容 + 方法名内容 + 参数内容)
+	// 修复：将uint16转换为uint32后再相加
+	fullPayload := make([]byte, 0, uint32(msgIDLen)+uint32(methodLen)+paramLen)
+	fullPayload = append(fullPayload, msgIDBytes...)
+	fullPayload = append(fullPayload, methodBytes...)
+	fullPayload = append(fullPayload, payload...)
+
+	// 构建用于计算校验和的数据
+	checksumData := make([]byte, 0)
+	// 1. 魔数
+	magicBytes := make([]byte, 2)
+	binary.BigEndian.PutUint16(magicBytes, MAGIC_NUMBER)
+	checksumData = append(checksumData, magicBytes...)
+	// 2. 版本
+	checksumData = append(checksumData, VERSION)
+	// 3. 消息ID长度
+	msgIDLenBytes := make([]byte, 2)
+	binary.BigEndian.PutUint16(msgIDLenBytes, msgIDLen)
+	checksumData = append(checksumData, msgIDLenBytes...)
+	// 4. 消息ID内容
+	checksumData = append(checksumData, msgIDBytes...)
+	// 5. 方法名长度
+	methodLenBytes := make([]byte, 2)
+	binary.BigEndian.PutUint16(methodLenBytes, methodLen)
+	checksumData = append(checksumData, methodLenBytes...)
+	// 6. 方法名内容
+	checksumData = append(checksumData, methodBytes...)
+	// 7. 参数长度
+	paramLenBytes := make([]byte, 4)
+	binary.BigEndian.PutUint32(paramLenBytes, paramLen)
+	checksumData = append(checksumData, paramLenBytes...)
+	// 8. 参数内容
+	checksumData = append(checksumData, payload...)
+
+	// 计算校验和
+	checksum := crc32.ChecksumIEEE(checksumData)
+
+	return &Message{
 		Header: MessageHeader{
-			Version:     ProtocolVersion1,
-			Type:        msgType,
-			RequestID:   generateRequestID(),
-			PayloadSize: uint32(len(payload)),
-			Timestamp:   time.Now().UnixNano(),
-			Priority:    0,
-			TraceID:     traceBytes,
-			RetryCount:  0,
+			Magic:     MAGIC_NUMBER,
+			Version:   VERSION,
+			MsgIDLen:  msgIDLen,
+			MethodLen: methodLen,
+			ParamLen:  paramLen,
+			Checksum:  checksum,
 		},
-		Payload: payload,
+		Payload: fullPayload,
 	}
-
-	// Calculate checksum
-	msg.Header.Checksum = msg.calculateChecksum()
-
-	return msg
 }
 
-// 定义协议头结构体（替代手动字节解析）
-type ProtocolHeader struct {
-	Magic         uint32 
-	Version       uint8  
-	MsgIDLen      uint16 
-	MethodNameLen uint16
-	ParamLen      uint32 
-	// 新增回调标识字段
-	CallbackFlag  uint8  // 0:无回调 1:需要回调
-	CallbackIDLen uint16 // 回调ID长度
-}
-
-// 编码协议头（替代手动写字节）
-func EncodeHeader(header ProtocolHeader) ([]byte, error) {
-	buf := new(bytes.Buffer)
-	err := binary.Write(buf, binary.BigEndian, header) // 自动序列化结构体
-	return buf.Bytes(), err
-}
-
-// 解码协议头（替代手动读字节）
-func DecodeHeader(data []byte) (ProtocolHeader, error) {
-	var header ProtocolHeader
-	err := binary.Read(bytes.NewReader(data), binary.BigEndian, &header) // 自动反序列化
-	return header, err
-}
-
-// calculateChecksum calculates CRC32 checksum of the message
-func (m *Message) calculateChecksum() uint32 {
-	// Create a copy of the header with checksum field zeroed
-	headerCopy := m.Header
-	// headerCopy.Checksum = 0
-
-	// Convert header to bytes（修复：单字节直接赋值）
+// Bytes 返回完整的协议消息字节流
+func (m *Message) Bytes() []byte {
 	headerBytes := make([]byte, HeaderSize)
-	headerBytes[0] = headerCopy.Version
-	headerBytes[1] = headerCopy.Type
-	headerBytes[2] = uint8(headerCopy.CompressionType)
-	binary.BigEndian.PutUint64(headerBytes[3:11], headerCopy.RequestID)
-	binary.BigEndian.PutUint32(headerBytes[11:15], headerCopy.PayloadSize)
-	binary.BigEndian.PutUint32(headerBytes[15:19], headerCopy.CompressedSize)
-	binary.BigEndian.PutUint64(headerBytes[19:27], uint64(headerCopy.Timestamp))
-	headerBytes[27] = headerCopy.Priority
-	binary.BigEndian.PutUint32(headerBytes[28:32], 0) // Checksum field (zeroed)
-	copy(headerBytes[32:48], headerCopy.TraceID[:])
-	headerBytes[48] = headerCopy.RetryCount
 
-	// Calculate checksum of header and payload
-	checksum := crc32.NewIEEE()
-	checksum.Write(headerBytes)
-	checksum.Write(m.Payload)
-	return checksum.Sum32()
+	// 魔数 (2字节)
+	binary.BigEndian.PutUint16(headerBytes[0:2], m.Header.Magic)
+	// 版本 (1字节)
+	headerBytes[2] = m.Header.Version
+	// 消息ID长度 (2字节)
+	binary.BigEndian.PutUint16(headerBytes[3:5], m.Header.MsgIDLen)
+	// 方法名长度 (2字节)
+	binary.BigEndian.PutUint16(headerBytes[5:7], m.Header.MethodLen)
+	// 参数长度 (4字节)
+	binary.BigEndian.PutUint32(headerBytes[7:11], m.Header.ParamLen)
+	// 校验和 (4字节)
+	binary.BigEndian.PutUint32(headerBytes[11:15], m.Header.Checksum)
+
+	// 拼接头部和负载
+	return append(headerBytes, m.Payload...)
 }
 
-// generateRequestID generates a unique request ID
-func generateRequestID() uint64 {
-	return uint64(time.Now().UnixNano())
-}
-
-// GetTraceID returns the trace ID as UUID
-func (m *Message) GetTraceID() uuid.UUID {
-	var id uuid.UUID
-	copy(id[:], m.Header.TraceID[:])
-	return id
-}
-
-// SetCompression sets the compression type for the message
-func (m *Message) SetCompression(typ CompressionType) {
-	m.Header.CompressionType = typ
-}
-
-// IsHeartbeatResponse 判断是否为心跳响应消息
-func IsHeartbeatResponse(msg *Message) bool {
-	return msg.Header.Type == TypeHeartbeat
-}
-
-// UnmarshalMessage 将字节数据反序列化为Message对象
+// UnmarshalMessage 从字节流解析消息
 func UnmarshalMessage(data []byte) (*Message, error) {
 	if len(data) < HeaderSize {
 		return nil, errors.New("invalid message data: too short")
 	}
 
 	msg := &Message{}
-	// 解析头部
-	msg.Header.Version = data[0]
-	msg.Header.Type = data[1]
-	msg.Header.CompressionType = CompressionType(data[2])
-	msg.Header.RequestID = binary.BigEndian.Uint64(data[3:11])
-	msg.Header.PayloadSize = binary.BigEndian.Uint32(data[11:15])
-	msg.Header.CompressedSize = binary.BigEndian.Uint32(data[15:19])
-	msg.Header.Timestamp = int64(binary.BigEndian.Uint64(data[19:27]))
-	msg.Header.Priority = data[27]
-	msg.Header.Checksum = binary.BigEndian.Uint32(data[28:32])
-	copy(msg.Header.TraceID[:], data[32:48])
-	msg.Header.RetryCount = data[48]
+	msg.Header.Magic = binary.BigEndian.Uint16(data[0:2])
+	msg.Header.Version = data[2]
+	msg.Header.MsgIDLen = binary.BigEndian.Uint16(data[3:5])
+	msg.Header.MethodLen = binary.BigEndian.Uint16(data[5:7])
+	msg.Header.ParamLen = binary.BigEndian.Uint32(data[7:11])
+	msg.Header.Checksum = binary.BigEndian.Uint32(data[11:15])
 
-	// 解析负载
+	// 提取负载数据
 	if len(data) > HeaderSize {
 		msg.Payload = data[HeaderSize:]
 	}
 
-	// 校验和验证
-	if msg.calculateChecksum() != msg.Header.Checksum {
+	// 验证校验和
+	if msg.CalculateChecksum() != msg.Header.Checksum {
 		return nil, errors.New("checksum mismatch")
 	}
 
 	return msg, nil
 }
 
-// Bytes 返回消息的完整字节表示（头部+负载）
-func (m *Message) Bytes() []byte {
-	headerBytes := make([]byte, HeaderSize)
-	headerBytes[0] = m.Header.Version
-	headerBytes[1] = m.Header.Type
-	headerBytes[2] = uint8(m.Header.CompressionType)
-	binary.BigEndian.PutUint64(headerBytes[3:11], m.Header.RequestID)
-	binary.BigEndian.PutUint32(headerBytes[11:15], m.Header.PayloadSize)
-	binary.BigEndian.PutUint32(headerBytes[15:19], m.Header.CompressedSize)
-	binary.BigEndian.PutUint64(headerBytes[19:27], uint64(m.Header.Timestamp))
-	headerBytes[27] = m.Header.Priority
-	binary.BigEndian.PutUint32(headerBytes[28:32], m.Header.Checksum)
-	copy(headerBytes[32:48], m.Header.TraceID[:])
-	headerBytes[48] = m.Header.RetryCount
-	return append(headerBytes, m.Payload...)
+// CalculateChecksum 计算校验和（与test.py完全一致）
+func (m *Message) CalculateChecksum() uint32 {
+	checksumData := make([]byte, 0)
+
+	// 1. 魔数
+	magicBytes := make([]byte, 2)
+	binary.BigEndian.PutUint16(magicBytes, m.Header.Magic)
+	checksumData = append(checksumData, magicBytes...)
+
+	// 2. 版本
+	checksumData = append(checksumData, m.Header.Version)
+
+	// 3. 消息ID长度
+	msgIDLenBytes := make([]byte, 2)
+	binary.BigEndian.PutUint16(msgIDLenBytes, m.Header.MsgIDLen)
+	checksumData = append(checksumData, msgIDLenBytes...)
+
+	// 4. 消息ID内容
+	if len(m.Payload) >= int(m.Header.MsgIDLen) {
+		checksumData = append(checksumData, m.Payload[:m.Header.MsgIDLen]...)
+	} else {
+		return 0
+	}
+
+	// 5. 方法名长度
+	methodLenBytes := make([]byte, 2)
+	binary.BigEndian.PutUint16(methodLenBytes, m.Header.MethodLen)
+	checksumData = append(checksumData, methodLenBytes...)
+
+	// 6. 方法名内容
+	methodStart := m.Header.MsgIDLen
+	methodEnd := methodStart + m.Header.MethodLen
+	if len(m.Payload) >= int(methodEnd) {
+		checksumData = append(checksumData, m.Payload[methodStart:methodEnd]...)
+	} else {
+		return 0
+	}
+
+	// 7. 参数长度
+	paramLenBytes := make([]byte, 4)
+	binary.BigEndian.PutUint32(paramLenBytes, m.Header.ParamLen)
+	checksumData = append(checksumData, paramLenBytes...)
+
+	// 8. 参数内容
+	paramStart := methodEnd
+	paramEnd := paramStart + uint16(m.Header.ParamLen)
+	if len(m.Payload) >= int(paramEnd) {
+		checksumData = append(checksumData, m.Payload[paramStart:paramEnd]...)
+	} else {
+		return 0
+	}
+
+	return crc32.ChecksumIEEE(checksumData)
+}
+
+// IsHeartbeatResponse 判断是否为心跳响应消息
+func IsHeartbeatResponse(msg *Message) bool {
+	// 从负载中提取方法名，判断是否为心跳请求
+	if msg.Header.MethodLen > 0 && len(msg.Payload) >= int(msg.Header.MsgIDLen+msg.Header.MethodLen) {
+		method := string(msg.Payload[msg.Header.MsgIDLen : msg.Header.MsgIDLen+msg.Header.MethodLen])
+		return method == "heartbeat"
+	}
+	return false
+}
+
+// NewResponse 创建客户端期望格式的响应消息
+func NewResponse(body []byte) []byte {
+	// 修复：正确计算缓冲区大小(2+1+4=7字节头部 + 消息体长度)
+	buffer := make([]byte, 7+len(body))
+
+	// 1. 魔数(2字节)
+	binary.BigEndian.PutUint16(buffer[0:2], MAGIC_NUMBER)
+	// 2. 版本(1字节)
+	buffer[2] = VERSION
+	// 3. 响应体长度(4字节) - 修复缓冲区越界
+	binary.BigEndian.PutUint32(buffer[3:7], uint32(len(body)))
+	// 4. 响应体内容
+	copy(buffer[7:], body)
+
+	return buffer
+}
+
+// ValidateResponseFormat 验证响应格式是否符合规范
+func ValidateResponseFormat(response []byte) error {
+	if len(response) < 7 {
+		return errors.New("响应长度不足7字节头部")
+	}
+
+	// 验证魔数
+	magic := binary.BigEndian.Uint16(response[0:2])
+	if magic != MAGIC_NUMBER {
+		return fmt.Errorf("响应魔数不匹配, 期望%#x, 实际%#x", MAGIC_NUMBER, magic)
+	}
+
+	// 验证版本
+	version := response[2]
+	if version != VERSION {
+		return fmt.Errorf("响应版本不匹配, 期望%d, 实际%d", VERSION, version)
+	}
+
+	// 验证长度字段
+	bodyLen := binary.BigEndian.Uint32(response[3:7])
+	if uint32(len(response)-7) != bodyLen {
+		return fmt.Errorf("响应长度字段不匹配, 头部声明%d字节, 实际%d字节", bodyLen, len(response)-7)
+	}
+
+	return nil
 }

@@ -1,8 +1,9 @@
-package protocol
+package ipcprotocol
 
 import (
 	"bytes"
 	"compress/gzip"
+
 	"github.com/klauspost/compress/zstd"
 	"github.com/pierrec/lz4"
 )
@@ -123,4 +124,4 @@ func (c *LZ4Compressor) Decompress(data []byte) ([]byte, error) {
 		return nil, err
 	}
 	return buf[:n], nil
-} 
+}

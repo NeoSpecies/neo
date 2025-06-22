@@ -2,25 +2,24 @@ package transport
 
 import (
 	"bufio"
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
-	"neo/internal/discovery"
-
-	// "neo/internal/connection"
-	// "neo/internal/discovery"
-	// "neo/internal/config"
 	"hash/crc32"
 	"io"
-
 	"log"
+	"neo/internal/config"
+	"neo/internal/connection"
+	"neo/internal/discovery"
+	"neo/internal/ipcprotocol"
 	"net"
+	"strconv"
 	"sync"
-	// "strconv"
-)
+	"time"
 
-// 协议魔数（设计文档定义）
-const magicNumber = 0xAEBD
+	"github.com/google/uuid"
+)
 
 // 服务注册表（设计文档服务发现机制）
 var serviceRegistry = make(map[string]func(map[string]interface{}) (interface{}, error))
@@ -34,26 +33,6 @@ func init() {
 	workerPool = NewWorkerPool(100) // 创建100个工作协程的协程池
 }
 
-// 删除以下连接池初始化代码块
-/*
-// 全局连接池
-var connectionPool *connection.ConnectionPool
-
-// 初始化连接池
-func init() {
-    // 创建连接池（实际实现需根据项目需求调整）
-    factory := func() (net.Conn, error) {
-        cfg := config.Get()
-        return net.Dial("tcp", net.JoinHostPort(cfg.IPC.Host, strconv.Itoa(cfg.IPC.Port)))
-    }
-    var err error
-    connectionPool, err = connection.NewConnectionPool(factory)
-    if err != nil {
-        log.Fatalf("Failed to create connection pool: %v", err)
-    }
-}
-*/
-
 // 注册服务（供 Go/Python 服务调用）
 func RegisterService(name string, handler func(map[string]interface{}) (interface{}, error)) {
 	registryLock.Lock()
@@ -62,275 +41,202 @@ func RegisterService(name string, handler func(map[string]interface{}) (interfac
 }
 
 // 启动 TCP 服务（传输层实现）
-// 修改StartIpcServer函数签名，添加启动完成回调
-func StartIpcServer(addr string, onStarted func()) error {
+func StartIpcServer() error {
+	// 1. 获取配置并构建地址
+	cfg := config.Get()
+	addr := net.JoinHostPort(cfg.IPC.Host, strconv.Itoa(cfg.IPC.Port))
+
+	// 2. 启动IPC服务监听
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
-		return err
+		return fmt.Errorf("启动IPC服务失败: %v", err)
 	}
-	fmt.Printf("IPC Server listening on %s\n", addr)
-	if onStarted != nil {
-		onStarted() // 服务器启动成功后调用回调
+	defer listener.Close()
+
+	// 3. 定义连接工厂函数
+	createConnection := func() (net.Conn, error) {
+		return net.Dial("tcp", addr)
 	}
 
+	// 4. 初始化连接池（仅传入工厂函数）
+	pool, err := connection.NewConnectionPool(createConnection)
+	if err != nil {
+		return fmt.Errorf("初始化连接池失败: %v", err)
+	}
+	defer pool.Close()
+
+	log.Printf("IPC服务已启动，监听地址: %s", addr)
+
+	// 5. 开始接受连接
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
+			log.Printf("接受连接失败: %v", err)
 			continue
 		}
-		// 使用协程池处理连接
-		workerPool.Submit(func() {
-			handleConnection(conn)
-		})
+		go handleConnection(conn) // 仅传递conn参数
 	}
-}
-
-// 发送错误响应
-func sendErrorResponse(conn net.Conn, errorMsg string) {
-	// 构造响应头
-	header := make([]byte, 0)
-	header = binary.BigEndian.AppendUint16(header, magicNumber)
-	header = append(header, 0x01) // 版本号
-
-	// 构造响应体
-	body := []byte(errorMsg)
-	header = binary.BigEndian.AppendUint32(header, uint32(len(body)))
-
-	// 发送完整响应
-	conn.Write(append(header, body...))
 }
 
 // 处理连接（协议解析核心）
 // 新增：服务发现实例（假设通过依赖注入获取）
 var discoveryInstance *discovery.Discovery
 
-// 修改handleConnection函数，处理服务注册请求
+// 处理连接（协议解析核心）
 func handleConnection(conn net.Conn) {
-    // 立即发送协议魔数 - 删除这行代码
-    // if _, err := conn.Write([]byte{0xAE, 0xBD}); err != nil {
-    //     log.Printf("发送魔数失败: %v", err)
-    //     return
-    // }
+	// 确保连接不会被意外关闭
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("处理连接时发生panic: %v", r)
+		}
+		conn.Close()
+	}()
 
-    // 确保连接不会被意外关闭
-    defer func() {
-        if r := recover(); r != nil {
-            log.Printf("处理连接时发生panic: %v", r)
-        }
-        conn.Close()
-    }()
-
-	// 先读取并解析参数
 	log.Printf("新连接来自: %s", conn.RemoteAddr())
 	defer conn.Close()
 
 	reader := bufio.NewReader(conn)
 
-	// 将变量声明移动到函数体内
-	var err error
-	var (
-		version   byte
-		msgIDLen  uint16
-		methodLen uint16
-		paramLen  uint32
-		checksum  uint32
-		totalData []byte
-	)
+	// 1. 读取固定头部（魔数+版本）
+	fixedHeader := make([]byte, 3)
+	if _, err := io.ReadFull(reader, fixedHeader); err != nil {
+		sendErrorResponse(conn, fmt.Sprintf(`{"error_code": 4000, "error_msg": "read fixed header failed: %v"}`, err))
+		return
+	}
+	magic := binary.BigEndian.Uint16(fixedHeader[:2])
+	version := fixedHeader[2]
+	log.Printf("Debug: 魔数=0x%X, 版本=%d", magic, version)
 
-	// 1. 读取并验证魔数（此处开始处理协议头）
-	magic, err := readUint16(reader)
-	if err != nil || magic != magicNumber {
-		// 修复：补充具体错误信息（包含实际魔数值）
-		errorMsg := fmt.Sprintf(`{"error_code": 4001, "error_msg": "invalid magic number, expected %#x, got %v"}`, magicNumber, magic)
-		sendErrorResponse(conn, errorMsg)
+	// 2. 验证魔数和版本
+	if magic != ipcprotocol.MAGIC_NUMBER {
+		sendErrorResponse(conn, fmt.Sprintf(`{"error_code": 4002, "error_msg": "invalid magic: expected 0x%X, got 0x%X"}`, ipcprotocol.MAGIC_NUMBER, magic))
 		return
 	}
-	// 将魔数添加到总数据中
-	totalData = append(totalData, byte(magic>>8), byte(magic))
+	if version > ipcprotocol.ProtocolVersion1 {
+		sendErrorResponse(conn, fmt.Sprintf(`{"error_code": 4003, "error_msg": "unsupported version: %d"}`, version))
+		return
+	}
 
-	// 2. 读取协议版本
-	version, err = reader.ReadByte()
-	if err != nil || version > 1 {
-		// 修复：补充实际版本号
-		errorMsg := fmt.Sprintf(`{"error_code": 4002, "error_msg": "unsupported protocol version, expected <=1, got %d"}`, version)
-		sendErrorResponse(conn, errorMsg)
+	// 3. 读取MsgID（TLV格式）
+	var msgIDLen uint16
+	if err := binary.Read(reader, binary.BigEndian, &msgIDLen); err != nil {
+		sendErrorResponse(conn, fmt.Sprintf(`{"error_code": 4004, "error_msg": "read msgIDLen failed: %v"}`, err))
 		return
 	}
-	totalData = append(totalData, version) // 记录版本到总数据
+	log.Printf("Debug: MsgIDLen=%d", msgIDLen)
 
-	// 3. 读取消息ID
-	msgIDLen, err = readUint16(reader)
-	if err != nil {
-		sendErrorResponse(conn, `{"error_code": 4004, "error_msg": "read msgID length failed"}`)
+	msgID := make([]byte, msgIDLen)
+	if _, err := io.ReadFull(reader, msgID); err != nil {
+		sendErrorResponse(conn, fmt.Sprintf(`{"error_code": 4005, "error_msg": "read msgID failed: %v"}`, err))
 		return
 	}
-	msgIDBytes, err := readBytes(reader, int(msgIDLen))
-	if err != nil {
-		sendErrorResponse(conn, `{"error_code": 4005, "error_msg": "read msgID failed"}`)
-		return
-	}
-	msgID := string(msgIDBytes)
-	// 拆分 msgIDLen 的字节和 msgIDBytes 为单个字节追加，解决 append 参数类型不匹配问题
-	totalData = append(totalData, byte(msgIDLen>>8))
-	totalData = append(totalData, byte(msgIDLen))
-	totalData = append(totalData, msgIDBytes...)
+	log.Printf("Debug: MsgID=%s", string(msgID))
 
-	// 4. 读取方法名
-	methodLen, err = readUint16(reader)
-	if err != nil {
-		sendErrorResponse(conn, `{"error_code": 4006, "error_msg": "read method length failed"}`)
+	// 4. 读取Method（TLV格式）
+	var methodLen uint16
+	if err := binary.Read(reader, binary.BigEndian, &methodLen); err != nil {
+		sendErrorResponse(conn, fmt.Sprintf(`{"error_code": 4006, "error_msg": "read methodLen failed: %v"}`, err))
 		return
 	}
-	methodBytes, err := readBytes(reader, int(methodLen))
-	if err != nil {
-		sendErrorResponse(conn, `{"error_code": 4007, "error_msg": "read method failed"}`)
-		return
-	}
-	method := string(methodBytes)
-	// 拆分追加操作，解决 append 参数过多问题
-	totalData = append(totalData, byte(methodLen>>8))
-	totalData = append(totalData, byte(methodLen))
-	totalData = append(totalData, methodBytes...)
+	log.Printf("Debug: MethodLen=%d", methodLen)
 
-	// 5. 读取参数内容
-	paramLen, err = readUint32(reader)
-	if err != nil {
-		sendErrorResponse(conn, `{"error_code": 4008, "error_msg": "read param length failed"}`)
+	method := make([]byte, methodLen)
+	if _, err := io.ReadFull(reader, method); err != nil {
+		sendErrorResponse(conn, fmt.Sprintf(`{"error_code": 4007, "error_msg": "read method failed: %v"}`, err))
 		return
 	}
-	paramData, err := readBytes(reader, int(paramLen))
-	if err != nil {
-		sendErrorResponse(conn, `{"error_code": 4009, "error_msg": "read param data failed"}`)
+	log.Printf("Debug: Method=%s", string(method))
+
+	// 5. 读取Param（TLV格式）
+	var paramLen uint32
+	if err := binary.Read(reader, binary.BigEndian, &paramLen); err != nil {
+		sendErrorResponse(conn, fmt.Sprintf(`{"error_code": 4008, "error_msg": "read paramLen failed: %v"}`, err))
 		return
 	}
+	log.Printf("Debug: ParamLen=%d", paramLen)
+
+	param := make([]byte, paramLen)
+	if _, err := io.ReadFull(reader, param); err != nil {
+		sendErrorResponse(conn, fmt.Sprintf(`{"error_code": 4009, "error_msg": "read param failed: %v"}`, err))
+		return
+	}
+	log.Printf("Debug: Param=%s", string(param))
+
+	// 6. 读取CRC32
+	var crc32Value uint32
+	if err := binary.Read(reader, binary.BigEndian, &crc32Value); err != nil {
+		sendErrorResponse(conn, fmt.Sprintf(`{"error_code": 4010, "error_msg": "read crc32 failed: %v"}`, err))
+		return
+	}
+	log.Printf("Debug: CRC32=0x%X", crc32Value)
+
+	// 计算校验和（重新构建原始数据）
+	rawData := make([]byte, 0)
+	rawData = append(rawData, fixedHeader...)
+	rawData = binary.BigEndian.AppendUint16(rawData, msgIDLen)
+	rawData = append(rawData, msgID...)
+	rawData = binary.BigEndian.AppendUint16(rawData, methodLen)
+	rawData = append(rawData, method...)
+	rawData = binary.BigEndian.AppendUint32(rawData, paramLen)
+	rawData = append(rawData, param...)
+
+	calculatedCRC32 := crc32.ChecksumIEEE(rawData)
+	if calculatedCRC32 != crc32Value {
+		sendErrorResponse(conn, fmt.Sprintf(`{"error_code": 4011, "error_msg": "crc32 mismatch: expected 0x%X, got 0x%X"}`, calculatedCRC32, crc32Value))
+		return
+	}
+	log.Printf("Debug: CRC32校验通过")
+
+	// 解析参数JSON
 	var params map[string]interface{}
-	if err = json.Unmarshal(paramData, &params); err != nil {
-		sendErrorResponse(conn, `{"error_code": 4003, "error_msg": "invalid parameter format"}`)
+	if err := json.Unmarshal(param, &params); err != nil {
+		sendErrorResponse(conn, fmt.Sprintf(`{"error_code": 4012, "error_msg": "param json decode failed: %v"}`, err))
 		return
 	}
-	// 删除以下错误代码块
-	// 兼容test.py的参数格式
-	// if action, ok := params["action"]; ok && action == "register" {
-	//     if serviceData, ok := params["service"].(map[string]interface{}); ok {
-	//         params = serviceData
-	//     }
-	// }
-	
-	// 保留参数验证，但修改为检查原始params
-	if _, ok := params["service"]; !ok {
-	    sendErrorResponse(conn, `{"error_code": 4010, "error_msg": "missing required field: service"}`)
-	    return
-	}
-	// 拆分追加操作，避免 append 参数过多问题
-	totalData = append(totalData, byte(paramLen>>24))
-	totalData = append(totalData, byte(paramLen>>16))
-	totalData = append(totalData, byte(paramLen>>8))
-	totalData = append(totalData, byte(paramLen))
-	totalData = append(totalData, paramData...)
+	log.Printf("Debug: 解析参数成功: %+v", params)
 
-	// 8. 读取并验证校验和（新增）
-	checksum, err = readUint32(reader)
-	if err != nil {
-		sendErrorResponse(conn, `{"error_code": 4016, "error_msg": "read checksum failed"}`)
-		return
-	}
-	calculatedChecksum := crc32.ChecksumIEEE(totalData)
-	if checksum != calculatedChecksum {
-		errorMsg := fmt.Sprintf(`{"error_code": 4017, "error_msg": "checksum verification failed, expected %#x, got %#x"}`, calculatedChecksum, checksum)
-		sendErrorResponse(conn, errorMsg)
-		return
-	}
-
-	// 9. 路由调用（移除文件参数注入）
-	// params["files"] = files // 已删除文件信息注入代码
+	// 调用服务注册逻辑
 	registryLock.RLock()
-	handler, exists := serviceRegistry[method]
+	handler, exists := serviceRegistry[string(method)]
 	registryLock.RUnlock()
 
 	var result interface{}
+	var err error
 	if exists {
 		result, err = handler(params)
 	} else {
 		err = fmt.Errorf("service %s not found", method)
 	}
+	log.Printf("Debug: 服务处理结果: %v, 错误: %v", result, err)
 
-	// 10. 返回响应（修改为包含 msgID）
+	// 构建响应数据
 	responseData := map[string]interface{}{
-		"msg_id": msgID,
+		"msg_id": string(msgID),
 		"result": result,
 	}
-	// 显式处理错误字段
 	if err != nil {
 		responseData["error"] = err.Error()
 	} else {
-		responseData["error"] = nil // 确保无错误时显式设置为null
+		responseData["error"] = nil
 	}
 
-	response, errMarshal := json.Marshal(responseData)
+	// 序列化响应
+	responseBody, errMarshal := json.Marshal(responseData)
 	if errMarshal != nil {
-		sendErrorResponse(conn, fmt.Sprintf(`{"error_code": 4018, "error_msg": "response serialization failed: %v"}`, errMarshal))
+		sendErrorResponse(conn, fmt.Sprintf(`{"error_code": 4013, "error_msg": "response marshal failed: %v"}`, errMarshal))
 		return
 	}
 
-	// 构造响应头（发送响应头字节错误）
-	// 修改响应头构造逻辑
-	// 构造响应头（修复版本号字节错误）
-	header := make([]byte, 7) // 2字节魔数 + 1字节版本 + 4字节长度 = 7字节
-	// 魔数（2字节大端）
-	binary.BigEndian.PutUint16(header[0:2], MAGIC_NUMBER)
-	// 版本（1字节）
-	header[2] = VERSION
-	// 响应体长度（4字节大端）
-	binary.BigEndian.PutUint32(header[3:7], uint32(len(response)))
-	conn.Write(append(header, response...))
+	// 创建响应消息
+	responseBytes := ipcprotocol.NewResponse(responseBody)
+	if _, writeErr := conn.Write(responseBytes); writeErr != nil {
+		log.Printf("发送响应失败: %v", writeErr)
+		return
+	}
+	log.Printf("Debug: 响应发送成功，长度: %d字节", len(responseBytes))
 }
 
-// 读取 uint16 类型数据
-func readUint16(reader io.Reader) (uint16, error) {
-	var num uint16
-	err := binary.Read(reader, binary.BigEndian, &num)
-	return num, err
-}
-
-// 读取指定长度的字节数据
-func readBytes(reader io.Reader, length int) ([]byte, error) {
-	data := make([]byte, length)
-	_, err := io.ReadFull(reader, data)
-	return data, err
-}
-
-// 读取 uint32 类型数据
-func readUint32(reader io.Reader) (uint32, error) {
-	var num uint32
-	err := binary.Read(reader, binary.BigEndian, &num)
-	return num, err
-}
-
-// 删除未使用的handleRequest函数
-// func handleRequest(conn net.Conn) {
-// 	// 解析客户端请求（假设请求格式包含msg_id）
-// 	var req struct {
-// 		MsgID string `json:"msg_id"`
-// 	}
-// 	if err := json.NewDecoder(conn).Decode(&req); err != nil {
-// 		// 错误处理...
-// 	}
-// 	msgID := req.MsgID
-// 	// 返回成功响应
-// 	responseData, _ := json.Marshal(map[string]interface{}{
-// 		"msg_id": msgID,
-// 		"result": "服务注册成功",
-// 	})
-// 	// 发送响应到客户端
-// 	_, err := conn.Write(responseData)
-// 	if err != nil {
-// 		log.Printf("发送响应失败: %v", err)
-// 	}
-// 	return
-// }
-
-// 新增WorkerPool实现
-// WorkerPool 协程池实现
+// WorkerPool 实现
 type WorkerPool struct {
 	workerCount int
 	jobs        chan func()
@@ -363,8 +269,103 @@ func (p *WorkerPool) Submit(job func()) {
 	p.jobs <- job
 }
 
-// 协议常量（与test.py完全一致）
-const (
-    MAGIC_NUMBER = 0xAEBD  // 2字节大端魔数
-    VERSION      = 0x01    // 1字节协议版本
-)
+// 发送错误响应（使用响应格式而非请求格式）
+func sendErrorResponse(conn net.Conn, errorMsg string) {
+	// 构建标准错误响应结构
+	errorResponse := map[string]interface{}{
+		"msg_id": uuid.New().String(), // 生成新UUID作为消息ID
+		"error":  errorMsg,
+		"result": nil,
+	}
+
+	// 序列化为JSON
+	responseBody, err := json.Marshal(errorResponse)
+	if err != nil {
+		log.Printf("错误响应序列化失败: %v", err)
+		// 发送最基础的错误响应
+		minimalErr := []byte(`{"error":"序列化错误","result":null}`)
+		conn.Write(ipcprotocol.NewResponse(minimalErr))
+		return
+	}
+
+	// 使用响应格式发送错误
+	responseBytes := ipcprotocol.NewResponse(responseBody)
+	if _, writeErr := conn.Write(responseBytes); writeErr != nil {
+		log.Printf("发送错误响应失败: %v", writeErr)
+	}
+}
+
+// 初始化服务发现实例
+func init() {
+	workerPool = NewWorkerPool(100)
+	// 初始化服务发现（使用内存存储）
+	storage := discovery.NewInMemoryStorage()
+	discoveryInstance = discovery.New(storage)
+	// 注册"register"服务处理函数
+	RegisterService("register", registerServiceHandler)
+}
+
+// 服务注册处理函数
+func registerServiceHandler(params map[string]interface{}) (interface{}, error) {
+	if discoveryInstance == nil {
+		return nil, fmt.Errorf("服务发现实例未初始化")
+	}
+
+	// 从嵌套的service对象中解析参数
+	serviceData, ok := params["service"].(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("invalid service data type")
+	}
+
+	serviceID, ok := serviceData["id"].(string)
+	if !ok {
+		return nil, fmt.Errorf("invalid service ID type")
+	}
+
+	serviceName, ok := serviceData["name"].(string)
+	if !ok {
+		return nil, fmt.Errorf("invalid service name type")
+	}
+
+	address, ok := serviceData["address"].(string)
+	if !ok {
+		return nil, fmt.Errorf("invalid address type")
+	}
+
+	portFloat, ok := serviceData["port"].(float64)
+	if !ok {
+		return nil, fmt.Errorf("invalid port type")
+	}
+	port := int(portFloat)
+
+	// 转换metadata类型: map[string]interface{} -> map[string]string
+	metadata := make(map[string]string)
+	if meta, ok := params["metadata"].(map[string]interface{}); ok {
+		for k, v := range meta {
+			metadata[k] = fmt.Sprintf("%v", v)
+		}
+	}
+
+	service := &discovery.Service{
+		ID:        serviceID,
+		Name:      serviceName,
+		Address:   address,
+		Port:      port,
+		Status:    "healthy",
+		Metadata:  metadata,
+		UpdatedAt: time.Now(),
+		ExpireAt:  time.Now().Add(30 * time.Second),
+	}
+
+	// 调用服务发现注册方法
+	if err := discoveryInstance.Register(context.Background(), service); err != nil {
+		return nil, fmt.Errorf("服务注册失败: %v", err)
+	}
+
+	// 返回包含服务ID的响应
+	return map[string]interface{}{
+		"status":  "success",
+		"message": "服务注册成功",
+		"id":      serviceID,
+	}, nil
+}
