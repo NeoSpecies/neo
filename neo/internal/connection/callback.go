@@ -5,16 +5,23 @@ import (
 	"time"
 )
 
+// 新增：定义回调函数类型
+// Callback 是异步操作完成后的回调函数类型
+// 参数：
+//   result: 操作结果
+//   err: 错误信息（非nil表示操作失败）
+type Callback func(interface{}, error)
+
 // CallbackManager 管理连接相关事件的回调函数
 type CallbackManager struct {
 	callbacks sync.RWMutex
-	registry  map[string]func(interface{}, error)
+	registry  map[string]Callback // 修改：使用新定义的Callback类型
 }
 
 // NewCallbackManager 创建回调管理器实例
 func NewCallbackManager() *CallbackManager {
 	return &CallbackManager{
-		registry: make(map[string]func(interface{}, error)),
+		registry: make(map[string]Callback), // 修复：使用Callback类型而非匿名函数类型
 	}
 }
 
