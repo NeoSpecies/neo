@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"hash/crc32"
 	"io"
@@ -13,13 +14,13 @@ import (
 	"neo/internal/connection"
 	"neo/internal/discovery"
 	"neo/internal/ipcprotocol"
+	"neo/internal/metrics"
 	"net"
 	"strconv"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
-	"neo/internal/metrics"
 )
 
 // 服务注册表（设计文档服务发现机制）
@@ -31,7 +32,7 @@ var workerPool *WorkerPool
 
 // 初始化协程池
 func init() {
-	workerPool = NewWorkerPool(100) // 创建100个工作协程的协程池
+	workerPool = NewWorkerPool(10, 100)
 }
 
 // 注册服务（供 Go/Python 服务调用）
@@ -253,43 +254,6 @@ func handleConnection(conn net.Conn) {
 		return
 	}
 	log.Printf("Debug: 响应发送成功，长度: %d字节", len(responseBytes))
-
-	// 删除此处重复的指标收集代码块
-	// 添加指标收集
-	// startTime := time.Now()
-	// defer func() {
-	// 记录请求延迟
-	// duration := time.Since(startTime)
-	// metrics.RecordLatency("ipc", string(method), duration)
-	// metrics.RecordRequest("ipc", string(method), "success")
-	// }
-}
-
-// WorkerPool 实现
-type WorkerPool struct {
-	workerCount int
-	jobs        chan func()
-	wg          sync.WaitGroup
-}
-
-// NewWorkerPool 创建新的协程池
-func NewWorkerPool(workerCount int) *WorkerPool {
-	pool := &WorkerPool{
-		workerCount: workerCount,
-		jobs:        make(chan func(), 100), // 缓冲区大小可根据需求调整
-	}
-
-	// 启动工作协程
-	for i := 0; i < workerCount; i++ {
-		go func() {
-			for job := range pool.jobs {
-				job()
-				pool.wg.Done()
-			}
-		}()
-	}
-
-	return pool
 }
 
 // Submit 提交任务到协程池
@@ -326,7 +290,7 @@ func sendErrorResponse(conn net.Conn, errorMsg string) {
 
 // 初始化服务发现实例
 func init() {
-	workerPool = NewWorkerPool(100)
+	workerPool = NewWorkerPool(10, 100)
 	// 初始化服务发现（使用内存存储）
 	storage := discovery.NewInMemoryStorage()
 	discoveryInstance = discovery.New(storage)
@@ -405,4 +369,67 @@ var metricsInstance *metrics.Metrics
 // 初始化监控
 func init() {
 	metricsInstance = metrics.NewMetrics()
+}
+
+// 新增TCPServer结构体封装所有依赖
+type TCPServer struct {
+	listener   net.Listener
+	pool       *connection.ConnectionPool
+	balancer   connection.Balancer
+	workerPool *WorkerPool
+	metrics    *metrics.Metrics
+	config     *config.IPCConfig
+	mu         sync.RWMutex
+	isRunning  bool
+}
+
+// 构造函数实现依赖注入
+func NewTCPServer(cfg *config.IPCConfig, balancer connection.Balancer) (*TCPServer, error) {
+	// 初始化所有依赖组件
+	workerCount := 100 // 使用默认值100，因为config.IPCConfig中没有WorkerCount字段
+	workerPool := NewWorkerPool(10, workerCount)
+	metrics := metrics.NewMetrics()
+
+	return &TCPServer{
+		config:     cfg,
+		balancer:   balancer,
+		workerPool: workerPool,
+		metrics:    metrics,
+		isRunning:  false,
+	}, nil
+}
+
+// 拆分超大函数为独立方法
+func (s *TCPServer) Start() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.isRunning {
+		return errors.New("server already running")
+	}
+
+	addr := net.JoinHostPort(s.config.Host, strconv.Itoa(s.config.Port))
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("listen failed: %w", err)
+	}
+	s.listener = listener
+	s.isRunning = true
+
+	go s.acceptLoop()
+	return nil
+}
+
+// 独立的连接接受循环
+func (s *TCPServer) acceptLoop() {
+	for s.isRunning {
+		conn, err := s.listener.Accept()
+		if err != nil {
+			log.Printf("接受连接失败: %v", err) // 替换metrics.RecordError
+			continue
+		}
+		s.workerPool.Submit(func() {
+			handleConnection(conn)
+		})
+	}
 }
