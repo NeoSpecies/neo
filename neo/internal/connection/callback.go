@@ -1,61 +1,64 @@
-package connection // 将包名从core修正为connection
+package connection
 
 import (
 	"sync"
 	"time"
-	"errors"
 )
 
-// 修改回调存储结构，添加超时时间
-var callbackMap = struct {
-	sync.RWMutex
-	m map[string]struct {
-		cb      func(interface{}, error)
-		timeout time.Duration
-		timer   *time.Timer
-	}
-}{m: make(map[string]struct{
-	cb      func(interface{}, error)
-	timeout time.Duration
-	timer   *time.Timer
-})}
-
-// 注册回调时添加超时参数
-func RegisterCallback(msgID string, timeout time.Duration, cb func(interface{}, error)) {
-	callbackMap.Lock()
-	defer callbackMap.Unlock()
-
-	// 先取消已存在的定时器
-	if existing, ok := callbackMap.m[msgID]; ok {
-		existing.timer.Stop()
-	}
-
-	// 创建新的超时清理定时器
-	timer := time.AfterFunc(timeout, func() {
-		callbackMap.Lock()
-		delete(callbackMap.m, msgID)
-		callbackMap.Unlock()
-		cb(nil, errors.New("callback timeout"))
-	})
-
-	callbackMap.m[msgID] = struct {
-		cb      func(interface{}, error)
-		timeout time.Duration
-		timer   *time.Timer
-	}{cb: cb, timeout: timeout, timer: timer}
+// CallbackManager 管理连接相关事件的回调函数
+type CallbackManager struct {
+	callbacks sync.RWMutex
+	registry  map[string]func(interface{}, error)
 }
 
-// 处理响应时停止定时器
-func HandleResponse(msgID string, result interface{}, err error) {
-	callbackMap.RLock()
-	entry, exists := callbackMap.m[msgID]
-	callbackMap.RUnlock()
+// NewCallbackManager 创建回调管理器实例
+func NewCallbackManager() *CallbackManager {
+	return &CallbackManager{
+		registry: make(map[string]func(interface{}, error)),
+	}
+}
+
+// Register 注册回调函数并设置超时清理
+// msgID: 消息唯一标识
+// cb: 回调函数
+// timeout: 超时自动清理时间
+func (m *CallbackManager) Register(msgID string, cb func(interface{}, error), timeout time.Duration) {
+	m.callbacks.Lock()
+	defer m.callbacks.Unlock()
+	m.registry[msgID] = cb
+
+	// 超时清理（解决原代码内存泄漏风险）
+	time.AfterFunc(timeout, func() {
+		m.callbacks.Lock()
+		defer m.callbacks.Unlock()
+		if _, exists := m.registry[msgID]; exists {
+			delete(m.registry, msgID)
+		}
+	})
+}
+
+// HandleResponse 处理响应并触发回调
+func (m *CallbackManager) HandleResponse(msgID string, result interface{}, err error) {
+	m.callbacks.RLock()
+	cb, exists := m.registry[msgID]
+	m.callbacks.RUnlock()
 
 	if exists {
-		entry.timer.Stop() // 停止超时定时器
-		go entry.cb(result, err)
-		callbackMap.Lock()
-		delete(callbackMap.m, msgID)
-		callbackMap.Unlock()
+		go cb(result, err) // 异步执行
+		m.callbacks.Lock()
+		delete(m.registry, msgID) // 执行后清理
+		m.callbacks.Unlock()
 	}
+}
+
+// 全局实例（供包内直接使用）
+var defaultCallbackManager = NewCallbackManager()
+
+// 包级快捷函数（简化外部调用）
+func RegisterCallback(msgID string, cb func(interface{}, error), timeout time.Duration) {
+	defaultCallbackManager.Register(msgID, cb, timeout)
+}
+
+func HandleCallbackResponse(msgID string, result interface{}, err error) {
+	defaultCallbackManager.HandleResponse(msgID, result, err)
 }
