@@ -24,41 +24,41 @@ type DefaultProtocolHandler struct {
 
 // 解析请求
 func (h *DefaultProtocolHandler) ParseRequest(reader *bufio.Reader) (*ipcprotocol.Message, error) {
-    // 读取完整消息数据（头部+负载）
-    headerBuf := make([]byte, ipcprotocol.HeaderSize)
-    if _, err := io.ReadFull(reader, headerBuf); err != nil {
-        return nil, fmt.Errorf("读取协议头失败: %w", err)
-    }
+	// 读取完整消息数据（头部+负载）
+	headerBuf := make([]byte, ipcprotocol.HeaderSize)
+	if _, err := io.ReadFull(reader, headerBuf); err != nil {
+		return nil, fmt.Errorf("读取协议头失败: %w", err)
+	}
 
-    // 解析头部获取总长度
-    // 修复：移除手动构造MessageHeader的冗余代码
-    msgIDLen := binary.BigEndian.Uint16(headerBuf[3:5])
-    methodLen := binary.BigEndian.Uint16(headerBuf[5:7])
-    paramLen := binary.BigEndian.Uint32(headerBuf[7:11])
-    totalLen := ipcprotocol.HeaderSize + int(msgIDLen) + int(methodLen) + int(paramLen)
+	// 解析头部获取总长度
+	// 修复：移除手动构造MessageHeader的冗余代码
+	msgIDLen := binary.BigEndian.Uint16(headerBuf[3:5])
+	methodLen := binary.BigEndian.Uint16(headerBuf[5:7])
+	paramLen := binary.BigEndian.Uint32(headerBuf[7:11])
+	totalLen := ipcprotocol.HeaderSize + int(msgIDLen) + int(methodLen) + int(paramLen)
 
-    // 读取完整消息
-    data := make([]byte, totalLen)
-    copy(data[:ipcprotocol.HeaderSize], headerBuf)
-    if _, err := io.ReadFull(reader, data[ipcprotocol.HeaderSize:]); err != nil {
-        return nil, fmt.Errorf("读取消息体失败: %w", err)
-    }
+	// 读取完整消息
+	data := make([]byte, totalLen)
+	copy(data[:ipcprotocol.HeaderSize], headerBuf)
+	if _, err := io.ReadFull(reader, data[ipcprotocol.HeaderSize:]); err != nil {
+		return nil, fmt.Errorf("读取消息体失败: %w", err)
+	}
 
-    // 使用ipcprotocol包解析完整消息
-    msg, err := ipcprotocol.UnmarshalMessage(data)
-    if err != nil {
-        return nil, fmt.Errorf("协议解析失败: %v", err)
-    }
+	// 使用ipcprotocol包解析完整消息
+	msg, err := ipcprotocol.UnmarshalMessage(data)
+	if err != nil {
+		return nil, fmt.Errorf("协议解析失败: %v", err)
+	}
 
-    // 验证魔数和版本（保留业务逻辑验证）
-    if msg.Header.Magic != h.magicNumber {
-        return nil, fmt.Errorf("无效魔数: 0x%X, 预期: 0x%X", msg.Header.Magic, h.magicNumber)
-    }
-    if msg.Header.Version > h.version {
-        return nil, fmt.Errorf("不支持的协议版本: %d, 当前支持: %d", msg.Header.Version, h.version)
-    }
+	// 验证魔数和版本（保留业务逻辑验证）
+	if msg.Header.Magic != h.magicNumber {
+		return nil, fmt.Errorf("无效魔数: 0x%X, 预期: 0x%X", msg.Header.Magic, h.magicNumber)
+	}
+	if msg.Header.Version > h.version {
+		return nil, fmt.Errorf("不支持的协议版本: %d, 当前支持: %d", msg.Header.Version, h.version)
+	}
 
-    return msg, nil
+	return msg, nil
 }
 
 // 构建响应
