@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"neo/internal/metrics"
 )
 
 // 服务注册表（设计文档服务发现机制）
@@ -65,6 +66,12 @@ func StartIpcServer() error {
 	}
 	defer pool.Close()
 
+	// 启动监控服务器 - 移至循环前执行
+	if err := metricsInstance.StartServer(); err != nil {
+		log.Printf("监控服务器启动失败: %v", err)
+		return err // 添加错误返回
+	}
+
 	log.Printf("IPC服务已启动，监听地址: %s", addr)
 
 	// 5. 开始接受连接
@@ -94,6 +101,18 @@ func handleConnection(conn net.Conn) {
 
 	log.Printf("新连接来自: %s", conn.RemoteAddr())
 	defer conn.Close()
+
+	// 添加指标收集 - 移至函数开头
+	startTime := time.Now()
+	var method []byte // 在defer前声明method变量
+	defer func() {
+		// 记录请求延迟 - 确保method已定义
+		if method != nil {
+			duration := time.Since(startTime)
+			metrics.RecordLatency("ipc", string(method), duration)
+			metrics.RecordRequest("ipc", string(method), "success")
+		}
+	}()
 
 	reader := bufio.NewReader(conn)
 
@@ -140,7 +159,7 @@ func handleConnection(conn net.Conn) {
 	}
 	log.Printf("Debug: MethodLen=%d", methodLen)
 
-	method := make([]byte, methodLen)
+	method = make([]byte, methodLen) // 这里仅赋值，不重新声明
 	if _, err := io.ReadFull(reader, method); err != nil {
 		sendErrorResponse(conn, fmt.Sprintf(`{"error_code": 4007, "error_msg": "read method failed: %v"}`, err))
 		return
@@ -234,6 +253,16 @@ func handleConnection(conn net.Conn) {
 		return
 	}
 	log.Printf("Debug: 响应发送成功，长度: %d字节", len(responseBytes))
+
+	// 删除此处重复的指标收集代码块
+	// 添加指标收集
+	// startTime := time.Now()
+	// defer func() {
+	// 记录请求延迟
+	// duration := time.Since(startTime)
+	// metrics.RecordLatency("ipc", string(method), duration)
+	// metrics.RecordRequest("ipc", string(method), "success")
+	// }
 }
 
 // WorkerPool 实现
@@ -368,4 +397,12 @@ func registerServiceHandler(params map[string]interface{}) (interface{}, error) 
 		"message": "服务注册成功",
 		"id":      serviceID,
 	}, nil
+}
+
+// 全局监控实例
+var metricsInstance *metrics.Metrics
+
+// 初始化监控
+func init() {
+	metricsInstance = metrics.NewMetrics()
 }

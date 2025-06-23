@@ -37,4 +37,4 @@ protocol:
 # 新增指标配置
 metrics:
   enable_prometheus: true
-  prometheus_port: 9091
+  prometheus_port: 9092
