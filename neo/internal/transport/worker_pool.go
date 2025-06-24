@@ -1,104 +1,182 @@
-// 独立协程池文件
 package transport
 
 import (
-	"sync"
+	"context"
+	"errors"
+	"log"
 	"time"
 )
 
-// 新增Job类型定义
-// Job 表示一个可执行的任务
-type Job func()
+// Task 表示工作池中的任务
+type Task struct {
+	Ctx        context.Context
+	Service    string
+	Method     string
+	Payload    []byte
+	Connection interface{}
+	Result     chan *TaskResult
+}
 
-// WorkerPool 协程池结构定义
+// TaskResult 表示任务执行结果
+type TaskResult struct {
+	Data  []byte
+	Error error
+}
+
+// Worker 工作协程
+type Worker struct {
+	ID          int
+	WorkerPool  chan chan *Task
+	TaskChannel chan *Task
+	quit        chan struct{}
+}
+
+// WorkerPool 工作池
 type WorkerPool struct {
-	minWorkers     int
-	maxWorkers     int
-	currentWorkers int
-	jobs           chan Job
-	wg             sync.WaitGroup
-	mu             sync.Mutex
+	WorkerCount      int
+	WorkerPool       chan chan *Task
+	TaskQueue        chan *Task
+	quit             chan struct{}
+	metricsCollector *MetricsCollector
 }
 
-// 动态调整协程数量
-func (p *WorkerPool) adjustWorkers() {
-	// 实现动态扩缩容逻辑
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	jobCount := len(p.jobs)
-	// 如果任务数大于当前工作协程数且未达到最大限制，则增加工作协程
-	if jobCount > p.currentWorkers && p.currentWorkers < p.maxWorkers {
-		// 计算需要增加的协程数，最多增加到maxWorkers
-		needAdd := jobCount - p.currentWorkers
-		if needAdd > p.maxWorkers-p.currentWorkers {
-			needAdd = p.maxWorkers - p.currentWorkers
-		}
-		for i := 0; i < needAdd; i++ {
-			p.startWorker()
-			p.currentWorkers++
-		}
-	} else if jobCount == 0 && p.currentWorkers > p.minWorkers {
-		// 如果没有任务且当前工作协程数大于最小限制，则减少到minWorkers
-		p.currentWorkers = p.minWorkers
+// NewWorker 创建新的工作协程
+func NewWorker(id int, workerPool chan chan *Task) *Worker {
+	return &Worker{
+		ID:          id,
+		WorkerPool:  workerPool,
+		TaskChannel: make(chan *Task),
+		quit:        make(chan struct{}),
 	}
 }
 
-// NewWorkerPool 创建新的协程池
-func NewWorkerPool(minWorkers, maxWorkers int) *WorkerPool {
-	if minWorkers <= 0 {
-		minWorkers = 5 // 默认最小工作协程数
-	}
-	if maxWorkers <= minWorkers {
-		maxWorkers = minWorkers * 2 // 确保最大工作协程数大于最小
-	}
-
-	wp := &WorkerPool{
-		minWorkers:     minWorkers,
-		maxWorkers:     maxWorkers,
-		currentWorkers: 0,
-		jobs:           make(chan Job, maxWorkers*2), // 缓冲区大小为最大工作协程数的2倍
-		wg:             sync.WaitGroup{},
-		mu:             sync.Mutex{},
-	}
-
-	// 启动初始工作协程
-	for i := 0; i < minWorkers; i++ {
-		wp.startWorker()
-		wp.currentWorkers++
-	}
-
-	// 启动后台调整协程
+// Start 启动工作协程
+func (w *Worker) Start() {
 	go func() {
-		ticker := time.NewTicker(5 * time.Second)
-		defer ticker.Stop()
+		for {
+			// 将当前工作协程的任务通道注册到工作池
+			w.WorkerPool <- w.TaskChannel
 
-		for range ticker.C {
-			wp.adjustWorkers()
-		}
-	}()
+			select {
+			case task := <-w.TaskChannel:
+				// 执行任务
+				result := &TaskResult{}
+				var err error
+				startTime := time.Now()
 
-	return wp
-}
+				// 模拟任务处理
+				// 实际应用中这里应该是具体的业务逻辑处理
+				result.Data, err = w.processTask(task)
+				result.Error = err
 
-// Submit 提交任务到协程池
-func (wp *WorkerPool) Submit(job Job) {
-	wp.jobs <- job
-}
+				// 记录指标
+				if task.Ctx != nil && task.Service != "" && task.Method != "" {
+					metricsCollector := NewMetricsCollector()
+					metricsCollector.CollectResponse(task.Ctx, task.Service, task.Method, startTime, err)
+				}
 
-// startWorker 启动一个工作协程
-func (wp *WorkerPool) startWorker() {
-	wp.wg.Add(1)
-	go func() {
-		defer wp.wg.Done()
-		for job := range wp.jobs {
-			job() // 执行任务
+				// 将结果发送回任务提交者
+				select {
+				case task.Result <- result:
+				case <-time.After(5 * time.Second):
+					log.Printf("任务结果发送超时，任务可能已取消")
+				}
+
+			case <-w.quit:
+				// 退出工作协程
+				return
+			}
 		}
 	}()
 }
 
-// Stop 停止协程池并等待所有任务完成
+// processTask 处理具体任务
+func (w *Worker) processTask(task *Task) ([]byte, error) {
+	// 这里应该是实际的任务处理逻辑
+	// 示例：简单休眠模拟处理时间
+	time.Sleep(10 * time.Millisecond)
+
+	// 模拟1%的错误率
+	if time.Now().UnixNano()%100 < 1 {
+		return nil, errors.New("模拟任务处理错误")
+	}
+
+	return []byte("任务处理结果"), nil
+}
+
+// Stop 停止工作协程
+func (w *Worker) Stop() {
+	close(w.quit)
+}
+
+// NewWorkerPool 创建新的工作池
+func NewWorkerPool(workerCount int, queueSize int) *WorkerPool {
+	pool := make(chan chan *Task, workerCount)
+	queue := make(chan *Task, queueSize)
+
+	return &WorkerPool{
+		WorkerCount:      workerCount,
+		WorkerPool:       pool,
+		TaskQueue:        queue,
+		quit:             make(chan struct{}),
+		metricsCollector: NewMetricsCollector(),
+	}
+}
+
+// Start 启动工作池
+func (wp *WorkerPool) Start() {
+	// 创建并启动工作协程
+	for i := 0; i < wp.WorkerCount; i++ {
+		worker := NewWorker(i+1, wp.WorkerPool)
+		worker.Start()
+	}
+
+	// 启动任务调度协程
+	go wp.dispatch()
+}
+
+// dispatch 任务调度
+func (wp *WorkerPool) dispatch() {
+	for {
+		select {
+		case task := <-wp.TaskQueue:
+			// 获取一个工作协程的任务通道
+			workerTaskChannel := <-wp.WorkerPool
+
+			// 将任务发送给工作协程
+			go func(task *Task) {
+				workerTaskChannel <- task
+			}(task)
+
+		case <-wp.quit:
+			// 停止所有工作协程
+			for i := 0; i < wp.WorkerCount; i++ {
+				workerTaskChannel := <-wp.WorkerPool
+				close(workerTaskChannel)
+			}
+			close(wp.WorkerPool)
+			return
+		}
+	}
+}
+
+// Submit 提交任务到工作池
+func (wp *WorkerPool) Submit(task *Task) error {
+	select {
+	case wp.TaskQueue <- task:
+		// 记录请求指标
+		if task.Ctx != nil && task.Service != "" && task.Method != "" {
+			startTime := wp.metricsCollector.CollectRequest(task.Ctx, task.Service, task.Method)
+			// 这里可以记录开始时间，但实际指标收集在任务完成时进行
+			_ = startTime // 避免未使用变量错误
+		}
+		return nil
+	case <-time.After(5 * time.Second):
+		return errors.New("任务队列已满，提交任务超时")
+	}
+}
+
+// Stop 停止工作池
 func (wp *WorkerPool) Stop() {
-	close(wp.jobs) // 关闭任务通道
-	wp.wg.Wait()  // 等待所有工作协程完成
+	close(wp.quit)
 }

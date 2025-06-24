@@ -48,6 +48,7 @@ type PoolConfig struct {
 	MinSize     int `yaml:"min_size"`
 	MaxSize     int `yaml:"max_size"`
 	IdleTimeout int `yaml:"idle_timeout"`
+	KeepAliveInterval int `yaml:"keep_alive_interval"` // 新增保持连接间隔字段
 }
 
 // 合并后的包初始化函数，设置默认配置

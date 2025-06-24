@@ -4,11 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log" // 新增log包导入
 	"neo/internal/config"
-	protocol "neo/internal/ipcprotocol"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -21,15 +20,16 @@ var (
 	ErrConnectionUnhealthy = errors.New("connection is unhealthy")
 )
 
-// Config 统一连接池配置（合并后）
+// Config 统一连接池配置
 type Config struct {
-	// 基础配置（原connection_pool.go字段）
-	MaxSize        int           // 最大连接数
-	MinSize        int           // 最小连接数
-	ConnectTimeout time.Duration // 连接超时时间
-	IdleTimeout    time.Duration // 空闲超时时间
+	// 基础配置
+	MaxSize           int           // 最大连接数
+	MinSize           int           // 最小连接数
+	ConnectTimeout    time.Duration // 连接超时时间
+	IdleTimeout       time.Duration // 空闲超时时间
+	KeepAliveInterval time.Duration // 保持连接间隔（新增）
 
-	// 扩展配置（原pool.go字段）
+	// 扩展配置
 	InitialSize         int                 // 初始连接数
 	AutoScaling         bool                // 是否启用自动扩缩容
 	ScaleUpThreshold    float64             // 扩容阈值（活跃连接比例）
@@ -39,47 +39,46 @@ type Config struct {
 	HealthCheckInterval time.Duration       // 健康检查间隔
 	MaxErrorCount       int                 // 最大错误次数
 	MaxLatency          time.Duration       // 最大延迟阈值
-	LoadBalance         LoadBalanceStrategy // 负载均衡策略（来自balancer.go）
+	LoadBalance         LoadBalanceStrategy // 负载均衡策略
 	MaxRetryCount       int                 // 连接创建最大重试次数
 	RetryInterval       time.Duration       // 连接重试间隔
 }
 
-// 连接池结构体新增扩缩容阈值配置
+// PoolConfig 连接池配置参数
 type PoolConfig struct {
 	MinSize   int // 最小连接数
 	MaxSize   int // 最大连接数
 	ExpandPct int // 扩容阈值（当前连接数超过MinSize*ExpandPct%时扩容）
 	ShrinkPct int // 缩容阈值（当前连接数低于MaxSize*ShrinkPct%时缩容）
-	// ... 其他配置
 }
 
-// Connection 统一连接结构体（合并后）
+// Connection 统一连接结构体
 type Connection struct {
-	conn       net.Conn         // 底层连接
-	pool       *ConnectionPool  // 所属连接池
-	Stats      *ConnectionStats // 连接统计（来自stats.go）
-	lastUsed   time.Time        // 最后使用时间（原connection_pool.go字段）
-	lastCheck  time.Time        // 最后检查时间（原pool.go字段）
-	inUse      bool             // 是否正在使用（原connection_pool.go字段）
-	errorCount int              // 错误次数（原connection_pool.go字段）
-	closed     bool             // 是否已关闭（原pool.go字段）
+	Conn       net.Conn           // 底层连接（已修复：改为导出字段）
+	pool       *TCPConnectionPool // 所属连接池
+	Stats      *ConnectionStats   // 连接统计 (使用stats.go中的定义)
+	lastUsed   time.Time          // 最后使用时间
+	lastCheck  time.Time          // 最后检查时间
+	inUse      bool               // 是否正在使用
+	errorCount int                // 错误次数
+	closed     bool               // 是否已关闭
 }
 
-// ConnectionPool 统一连接池结构体（合并后）
-type ConnectionPool struct {
+// TCPConnectionPool 连接池结构体
+type TCPConnectionPool struct {
 	mu          sync.RWMutex
-	config      Config                   // 合并后的完整配置（含基础+扩展参数）
+	config      Config                   // 合并后的完整配置
 	factory     func() (net.Conn, error) // 连接创建工厂
-	connections []*Connection            // 合并后的连接列表（含统计和健康状态）
-	balancer    Balancer                 // 负载均衡器（来自balancer.go）
+	connections []*Connection            // 合并后的连接列表
+	balancer    Balancer                 // 负载均衡器
 	closed      bool                     // 关闭状态标记
 
-	// 基础连接池参数（原connection_pool.go字段）
+	// 基础连接池参数
 	maxSize int           // 最大连接数
 	minSize int           // 最小连接数
 	timeout time.Duration // 连接超时时间
 
-	// 监控指标（原pool.go字段）
+	// 监控指标
 	metrics struct {
 		totalConnections  int64
 		activeConnections int64
@@ -87,32 +86,36 @@ type ConnectionPool struct {
 		waitingRequests   int64
 	}
 
-	// 控制通道（原pool.go字段）
+	// 控制通道
 	done     chan struct{}
 	waitConn chan struct{} // 等待可用连接的通道
 }
 
-// NewConnectionPool 创建连接池
-func NewConnectionPool(factory func() (net.Conn, error)) (*ConnectionPool, error) {
+// NewTCPConnectionPool 创建连接池
+func NewTCPConnectionPool(factory func() (net.Conn, error)) (*TCPConnectionPool, error) {
 	cfg := config.Get().Pool
 	config := Config{
-		MaxSize:     cfg.MaxSize,
-		MinSize:     cfg.MinSize,
-		InitialSize: cfg.InitialSize,
-		IdleTimeout: time.Duration(cfg.IdleTimeout) * time.Second,
-		// 其他配置项根据需要设置
-		MaxRetryCount: 3,                      // 默认重试3次
-		RetryInterval: 100 * time.Millisecond, // 默认重试间隔100ms
+		MaxSize:           cfg.MaxSize,
+		MinSize:           cfg.MinSize,
+		InitialSize:       cfg.InitialSize,
+		IdleTimeout:       time.Duration(cfg.IdleTimeout) * time.Second,
+		KeepAliveInterval: time.Duration(cfg.KeepAliveInterval) * time.Second, // 新增：加载保持连接间隔配置
+		MaxRetryCount:     3,
+		RetryInterval:     100 * time.Millisecond,
 	}
 
 	if err := validateConfig(config); err != nil {
 		return nil, err
 	}
 
-	pool := &ConnectionPool{
-		config:   config,
-		factory:  factory,
-		balancer: NewBalancer(config.LoadBalance),
+	// 创建指标收集器（实际使用时需要正确导入并初始化）
+	var metricsCollector MetricsCollector
+
+	pool := &TCPConnectionPool{
+		config:  config,
+		factory: factory,
+		// 创建负载均衡器，传入策略和指标收集器
+		balancer: NewBalancer(config.LoadBalance, "tcp", "connection", metricsCollector),
 		done:     make(chan struct{}),
 		waitConn: make(chan struct{}, config.MaxSize),
 	}
@@ -149,8 +152,8 @@ func validateConfig(config Config) error {
 	return nil
 }
 
-// createConnection 创建新连接
-func (p *ConnectionPool) createConnection() (*Connection, error) {
+// createConnection 创建新连接（内部未导出方法）
+func (p *TCPConnectionPool) createConnection() (*Connection, error) {
 	var conn net.Conn
 	var err error
 
@@ -159,9 +162,9 @@ func (p *ConnectionPool) createConnection() (*Connection, error) {
 		conn, err = p.factory()
 		if err == nil {
 			return &Connection{
-				conn:      conn,
+				Conn:      conn, // 已修复：使用导出字段Conn
 				pool:      p,
-				Stats:     NewConnectionStats(),
+				Stats:     NewConnectionStats(), // 使用stats.go中的构造函数
 				lastCheck: time.Now(),
 			}, nil
 		}
@@ -172,8 +175,13 @@ func (p *ConnectionPool) createConnection() (*Connection, error) {
 	return nil, fmt.Errorf("达到最大重试次数 %d: %v", p.config.MaxRetryCount, err)
 }
 
-// Acquire 获取连接（合并后逻辑）
-func (p *ConnectionPool) Acquire(ctx context.Context) (*Connection, error) {
+// CreateConnection 创建新连接（导出方法供外部调用）
+func (p *TCPConnectionPool) CreateConnection() (*Connection, error) {
+	return p.createConnection()
+}
+
+// Acquire 获取连接
+func (p *TCPConnectionPool) Acquire(ctx context.Context) (*Connection, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -181,48 +189,48 @@ func (p *ConnectionPool) Acquire(ctx context.Context) (*Connection, error) {
 		return nil, ErrPoolClosed
 	}
 
-	// 1. 使用负载均衡器选择可用连接（来自balancer.go）
-	availableConns := p.getAvailableConnections() // 过滤未使用且健康的连接
-	if conn := p.balancer.Select(availableConns); conn != nil {
-		conn.inUse = true
-		conn.lastUsed = time.Now()
-		p.metrics.activeConnections++
-		return conn, nil
+	// 使用负载均衡器选择可用连接
+	availableConns := p.getAvailableConnections()
+	// 将[]*Connection转换为[]interface{}
+	connInterfaces := make([]interface{}, len(availableConns))
+	for i, c := range availableConns {
+		connInterfaces[i] = c
+	}
+	// 正确处理Pick方法的两个返回值
+	conn, err := p.balancer.Pick(connInterfaces)
+	if err == nil && conn != nil {
+		// 类型断言转换回*Connection
+		if typedConn, ok := conn.(*Connection); ok {
+			// 标记连接为使用中
+			typedConn.inUse = true
+			typedConn.lastUsed = time.Now()
+			atomic.AddInt64(&p.metrics.activeConnections, 1)
+			return typedConn, nil
+		}
 	}
 
-	// 2. 若没有可用连接且未达最大限制，创建新连接（原connection_pool.go逻辑）
-	if len(p.connections) < p.maxSize {
-		newConn, err := p.factory()
-		if err != nil {
-			return nil, err
-		}
-		wrappedConn := &Connection{
-			conn:     newConn,
-			pool:     p,
-			Stats:    NewConnectionStats(),
-			lastUsed: time.Now(),
-			inUse:    true,
-		}
-		p.connections = append(p.connections, wrappedConn)
-		p.metrics.totalConnections++
-		p.metrics.activeConnections++
-		return wrappedConn, nil
+	// 连接池耗尽，无法创建新连接
+	if len(p.connections) >= p.config.MaxSize {
+		return nil, ErrPoolExhausted
 	}
 
-	// 3. 连接池耗尽，等待可用连接（原pool.go逻辑）
-	p.metrics.waitingRequests++
-	select {
-	case <-ctx.Done():
-		p.metrics.waitingRequests--
-		return nil, ctx.Err()
-	case <-p.waitConn:
-		// 等待后重新尝试获取
-		return p.Acquire(ctx)
+	// 创建新连接
+	newConn, err := p.createConnection()
+	if err != nil {
+		return nil, err
 	}
+
+	newConn.inUse = true
+	newConn.lastUsed = time.Now()
+	p.connections = append(p.connections, newConn)
+	atomic.AddInt64(&p.metrics.totalConnections, 1)
+	atomic.AddInt64(&p.metrics.activeConnections, 1)
+
+	return newConn, nil
 }
 
 // Release 释放连接
-func (p *ConnectionPool) Release(conn *Connection) {
+func (p *TCPConnectionPool) Release(conn *Connection) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -230,8 +238,8 @@ func (p *ConnectionPool) Release(conn *Connection) {
 		return
 	}
 
-	conn.Stats.ActiveRequests--
-	conn.Stats.LastUsedTime = time.Now()
+	conn.inUse = false
+	conn.lastUsed = time.Now()
 
 	// 通知等待的请求
 	if p.metrics.waitingRequests > 0 {
@@ -243,7 +251,7 @@ func (p *ConnectionPool) Release(conn *Connection) {
 }
 
 // Close 关闭连接池
-func (p *ConnectionPool) Close() error {
+func (p *TCPConnectionPool) Close() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -255,7 +263,7 @@ func (p *ConnectionPool) Close() error {
 	close(p.done)
 
 	for _, conn := range p.connections {
-		conn.conn.Close()
+		conn.Conn.Close() // 已修复：使用导出字段Conn
 		conn.closed = true
 	}
 
@@ -264,7 +272,10 @@ func (p *ConnectionPool) Close() error {
 }
 
 // maintain 维护连接池（自动扩缩容、健康检查等）
-func (p *ConnectionPool) maintain() {
+func (p *TCPConnectionPool) maintain() {
+	if p.config.HealthCheckInterval == 0 {
+		p.config.HealthCheckInterval = 30 * time.Second
+	}
 	ticker := time.NewTicker(p.config.HealthCheckInterval)
 	defer ticker.Stop()
 
@@ -286,7 +297,7 @@ func (p *ConnectionPool) maintain() {
 }
 
 // performHealthCheck 执行健康检查
-func (p *ConnectionPool) performHealthCheck() {
+func (p *TCPConnectionPool) performHealthCheck() {
 	now := time.Now()
 	for i := 0; i < len(p.connections); i++ {
 		conn := p.connections[i]
@@ -295,14 +306,7 @@ func (p *ConnectionPool) performHealthCheck() {
 		}
 
 		// 检查错误次数
-		if conn.Stats.ErrorCount > int64(p.config.MaxErrorCount) {
-			p.removeConnection(i)
-			i--
-			continue
-		}
-
-		// 检查平均延迟
-		if avgLatency := conn.Stats.LatencyStats.Average(); avgLatency > p.config.MaxLatency {
+		if conn.errorCount > p.config.MaxErrorCount {
 			p.removeConnection(i)
 			i--
 			continue
@@ -319,58 +323,13 @@ func (p *ConnectionPool) performHealthCheck() {
 	}
 }
 
-// adjustPoolSize 调整连接池大小
-// AutoAdjust 自动调整连接池大小（修复后）
-func (p *ConnectionPool) AutoAdjust() {
-	ticker := time.NewTicker(5 * time.Second)
-	defer ticker.Stop()
-
-	for range ticker.C {
-		p.mu.Lock()
-		total := len(p.connections)
-		if total == 0 {
-			p.mu.Unlock()
-			continue
-		}
-
-		active := 0
-		for _, conn := range p.connections {
-			if conn.Stats.ActiveRequests > 0 {
-				active++
-			}
-		}
-
-		// 扩容逻辑（整合原 maybeResize 功能）
-		if float64(active)/float64(total) > p.config.ScaleUpThreshold && total < p.config.MaxSize {
-			toAdd := min(p.config.ScaleStep, p.config.MaxSize-total)
-			for i := 0; i < toAdd; i++ {
-				// 添加连接创建重试机制
-				var newConn *Connection
-				var err error
-				for retry := 0; retry < 3; retry++ {
-					newConn, err = p.createConnection()
-					if err == nil {
-						break
-					}
-					log.Printf("连接创建失败，重试第 %d 次: %v", retry+1, err)
-					time.Sleep(100 * time.Millisecond)
-				}
-				if newConn != nil {
-					p.connections = append(p.connections, newConn)
-				}
-			}
-		}
-		p.mu.Unlock()
-	}
-}
-
 // cleanIdleConnections 清理空闲连接
-func (p *ConnectionPool) cleanIdleConnections() {
+func (p *TCPConnectionPool) cleanIdleConnections() {
 	now := time.Now()
 	for i := 0; i < len(p.connections); i++ {
 		conn := p.connections[i]
-		if conn.Stats.ActiveRequests == 0 &&
-			now.Sub(conn.Stats.LastUsedTime) > p.config.IdleTimeout &&
+		if !conn.inUse &&
+			now.Sub(conn.lastUsed) > p.config.IdleTimeout &&
 			len(p.connections) > p.config.MinSize {
 			p.removeConnection(i)
 			i--
@@ -379,42 +338,36 @@ func (p *ConnectionPool) cleanIdleConnections() {
 }
 
 // removeConnection 移除连接
-func (p *ConnectionPool) removeConnection(index int) {
+func (p *TCPConnectionPool) removeConnection(index int) {
 	conn := p.connections[index]
-	conn.conn.Close()
+	conn.Conn.Close() // 已修复：使用导出字段Conn
 	conn.closed = true
 	p.connections = append(p.connections[:index], p.connections[index+1:]...)
 }
 
 // checkConnection 检查连接健康状态
-func (p *ConnectionPool) checkConnection(conn *Connection) error {
-	// 实现具体的健康检查逻辑（使用 conn 参数）
-	// 示例：尝试向连接写入一个心跳包并读取响应
+func (p *TCPConnectionPool) checkConnection(conn *Connection) error {
+	// 实现具体的健康检查逻辑
 	testData := []byte("heartbeat")
-	// 使用 conn.conn（底层 net.Conn）执行写操作
-	if _, err := conn.conn.Write(testData); err != nil {
+	if _, err := conn.Conn.Write(testData); err != nil { // 已修复：使用导出字段Conn
 		return errors.New("connection write failed: " + err.Error())
 	}
-	// 读取响应验证连接状态
+	// 设置读取超时
+	conn.Conn.SetReadDeadline(time.Now().Add(1 * time.Second)) // 已修复：使用导出字段Conn
 	buf := make([]byte, len(testData))
-	if _, err := conn.conn.Read(buf); err != nil {
+	if _, err := conn.Conn.Read(buf); err != nil { // 已修复：使用导出字段Conn
 		return fmt.Errorf("connection read failed: %v", err)
 	}
+	// 重置读取超时
+	conn.Conn.SetReadDeadline(time.Time{}) // 已修复：使用导出字段Conn
 	return nil
 }
 
-// activateConnection 激活连接
-// func (p *ConnectionPool) activateConnection(conn *Connection) {
-// 	conn.Stats.ActiveRequests++
-// 	conn.Stats.TotalRequests++
-// 	conn.Stats.LastUsedTime = time.Now()
-// }
-
 // getAvailableConnections 获取可用连接列表
-func (p *ConnectionPool) getAvailableConnections() []*Connection {
+func (p *TCPConnectionPool) getAvailableConnections() []*Connection {
 	available := make([]*Connection, 0, len(p.connections))
 	for _, conn := range p.connections {
-		if !conn.closed && conn.Stats.ActiveRequests == 0 {
+		if !conn.closed && !conn.inUse {
 			available = append(available, conn)
 		}
 	}
@@ -422,7 +375,7 @@ func (p *ConnectionPool) getAvailableConnections() []*Connection {
 }
 
 // GetStats 获取连接池统计信息
-func (p *ConnectionPool) GetStats() map[string]interface{} {
+func (p *TCPConnectionPool) GetStats() map[string]interface{} {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 
@@ -431,127 +384,17 @@ func (p *ConnectionPool) GetStats() map[string]interface{} {
 	stats["waiting_requests"] = p.metrics.waitingRequests
 
 	active := 0
-	errors := int64(0)
+	errorCount := 0
 	for _, conn := range p.connections {
-		if conn.Stats.ActiveRequests > 0 {
+		if conn.inUse {
 			active++
 		}
-		errors += conn.Stats.ErrorCount
+		errorCount += conn.errorCount
 	}
 
 	stats["active_connections"] = active
 	stats["idle_connections"] = len(p.connections) - active
-	stats["total_errors"] = errors
+	stats["total_errors"] = errorCount
 
 	return stats
-}
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
-// 连接池核心结构体（扩展负载监控字段）
-type ConnPool struct {
-	sync.Mutex
-	minSize      int                      // 最小连接数（配置项）
-	maxSize      int                      // 最大连接数（配置项）
-	idleConns    []*Connection            // 空闲连接
-	activeConns  int                      // 活跃连接数（正在处理请求的连接）
-	waitingQueue int                      // 等待获取连接的请求数
-	avgRTT       time.Duration            // 最近1分钟平均响应时间（毫秒）
-	maxUtil      float64                  // 最近5分钟最大连接利用率（activeConns/totalConns）
-	config       Config                   // 新增：连接池配置
-	factory      func() (net.Conn, error) // 新增：连接工厂函数
-}
-
-// 启动连接池自动管理循环（在NewConnPool初始化时调用）
-func (p *ConnPool) StartAutoManager(interval time.Duration) {
-	ticker := time.NewTicker(interval)
-	go func() {
-		for range ticker.C {
-			p.maybeResize()
-		}
-	}()
-}
-
-// 动态扩缩容核心逻辑（修复NewConnection未定义）
-func (p *ConnPool) maybeResize() {
-	p.Lock()
-	defer p.Unlock()
-
-	totalConns := len(p.idleConns) + p.activeConns
-
-	// 扩容逻辑（连接池未满且负载高）
-	if totalConns < p.maxSize && p.waitingQueue > 0 && p.maxUtil > 0.8 {
-		needAdd := min((totalConns * 20 / 100), p.maxSize-totalConns)
-		for i := 0; i < needAdd; i++ {
-			conn, err := p.factory() // 使用工厂函数创建底层连接
-			if err == nil {
-				// 包装为Connection对象
-				wrappedConn := &Connection{
-					conn:      conn,
-					pool:      nil, // 需关联正确的连接池实例
-					Stats:     NewConnectionStats(),
-					lastCheck: time.Now(),
-				}
-				p.idleConns = append(p.idleConns, wrappedConn) // 改为添加*Connection
-			}
-		}
-	}
-
-	// 缩容逻辑（连接池非最小且负载低）
-	if totalConns > p.minSize && p.activeConns < p.minSize && p.avgRTT < 50*time.Millisecond {
-		needRemove := min((totalConns * 10 / 100), totalConns-p.minSize)
-		for i := 0; i < needRemove; i++ {
-			if len(p.idleConns) > 0 {
-				conn := p.idleConns[0]
-				p.idleConns = p.idleConns[1:]
-				conn.conn.Close() // 改为调用底层net.Conn的Close方法
-			}
-		}
-	}
-}
-
-func (p *ConnPool) HealthCheck() {
-	p.Lock()
-	defer p.Unlock()
-
-	for i, conn := range p.idleConns {
-		// 发送心跳包（使用协议定义的HEARTBEAT类型）
-		heartbeat := protocol.NewMessage(protocol.TypeHeartbeat, "heartbeat", []byte("ping")) // 使用NewMessage生成带校验和的消息
-		sendTime := time.Now()
-
-		// 发送并等待响应（使用Bytes方法获取字节数据）
-		if _, err := conn.conn.Write(heartbeat.Bytes()); err != nil {
-			p.removeConn(i)
-			continue
-		}
-
-		buf := make([]byte, 1024)
-		n, err := conn.conn.Read(buf)
-		if err != nil {
-			p.removeConn(i)
-			continue
-		}
-
-		// 反序列化为Message对象后验证
-		receivedMsg, err := protocol.UnmarshalMessage(buf[:n])
-		if err != nil || !protocol.IsHeartbeatResponse(receivedMsg) {
-			p.removeConn(i)
-			continue
-		}
-
-		// 记录响应时间（使用LatencyStats）
-		rtt := time.Since(sendTime)
-		conn.Stats.LatencyStats.Add(rtt)
-	}
-}
-
-// 辅助函数：移除连接并关闭
-func (p *ConnPool) removeConn(index int) {
-	conn := p.idleConns[index]
-	conn.conn.Close() // 改为调用底层net.Conn的Close方法
-	p.idleConns = append(p.idleConns[:index], p.idleConns[index+1:]...)
 }

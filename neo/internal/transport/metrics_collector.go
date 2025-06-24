@@ -1,28 +1,45 @@
 package transport
 
 import (
-	"neo/internal/metrics"
+	"context"
 	"time"
+
+	"neo/internal/metrics"
 )
 
-// MetricsCollector 专注于监控指标收集
+// MetricsCollector 处理服务调用的指标收集
 type MetricsCollector struct {
-	// 移除metrics字段，使用全局metrics包函数
+	// 可以添加配置字段，如指标前缀、采样率等
 }
 
-// NewMetricsCollector 创建新的指标收集器
+// NewMetricsCollector 创建新的指标收集器实例
 func NewMetricsCollector() *MetricsCollector {
 	return &MetricsCollector{}
 }
 
-// RecordRequest 记录请求指标
-// 修复：使用全局metrics包的RecordRequest函数
-func (c *MetricsCollector) RecordRequest(method string, status string) {
-	metrics.RecordRequest("ipc", method, status)
+// CollectRequest 记录请求开始时的指标
+func (m *MetricsCollector) CollectRequest(ctx context.Context, serviceName, method string) time.Time {
+	// 记录请求总数，默认状态为"started"
+	metrics.Default.RecordRequest(serviceName, method, "started")
+	return time.Now()
 }
 
-// RecordLatency 记录延迟指标
-// 修复：使用全局metrics包的RecordLatency函数
-func (c *MetricsCollector) RecordLatency(method string, duration time.Duration) {
-	metrics.RecordLatency("ipc", method, duration)
+// CollectResponse 记录请求完成时的指标
+func (m *MetricsCollector) CollectResponse(ctx context.Context, serviceName, method string, startTime time.Time, err error) {
+	// 计算请求持续时间
+	duration := time.Since(startTime)
+	status := "success"
+	errorType := ""
+
+	// 如果有错误，记录错误指标
+	if err != nil {
+		status = "error"
+		errorType = err.Error()
+		metrics.Default.RecordError(serviceName, method, errorType)
+	}
+
+	// 更新请求状态为完成
+	metrics.Default.RecordRequest(serviceName, method, status)
+	// 记录延迟指标
+	metrics.Default.RecordLatency(serviceName, method, duration)
 }

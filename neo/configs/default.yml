@@ -6,10 +6,11 @@ ipc:
 
 # 连接池配置 (确保没有重复的pool配置块)
 pool:
-  initial_size: 6        # 初始连接数 (必须为整数且介于min_size和max_size之间)
+  initial_size: 6        # 初始连接数
   min_size: 5            # 最小空闲连接数
   max_size: 20           # 最大连接数
   idle_timeout: 60       # 空闲连接超时时间(秒)
+  keep_alive_interval: 30 # 新增保持连接间隔(秒)
 
 http:
   host: 0.0.0.0

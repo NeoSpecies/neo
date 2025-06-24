@@ -9,6 +9,10 @@ import (
 
 // ConnectionStats 连接统计信息
 type ConnectionStats struct {
+	BytesRead      uint64        // 读取字节数
+	BytesWritten   uint64        // 写入字节数
+	StartTime      time.Time     // 连接开始时间
+	LastActive     time.Time     // 最后活动时间
 	ActiveRequests int64         // 当前活跃请求数
 	TotalRequests  int64         // 总请求数
 	ErrorCount     int64         // 错误数
@@ -19,23 +23,25 @@ type ConnectionStats struct {
 // NewConnectionStats 创建连接统计
 func NewConnectionStats() *ConnectionStats {
 	return &ConnectionStats{
-		LatencyStats: NewLatencyStats(),
+		StartTime:    time.Now(),
+		LastActive:   time.Now(),
 		LastUsedTime: time.Now(),
+		LatencyStats: NewLatencyStats(),
 	}
 }
 
 // LatencyStats 延迟统计
 type LatencyStats struct {
-	mu          sync.RWMutex
-	count       int64
-	sum         time.Duration
-	min         time.Duration
-	max         time.Duration
-	buckets     []int64    // 延迟分布桶
-	boundaries  []float64  // 桶边界（毫秒）
-	windowSize  int        // 滑动窗口大小
-	samples     []float64  // 最近的样本
-	currentPos  int       // 当前样本位置
+	mu         sync.RWMutex
+	count      int64
+	sum        time.Duration
+	min        time.Duration
+	max        time.Duration
+	buckets    []int64   // 延迟分布桶
+	boundaries []float64 // 桶边界（毫秒）
+	windowSize int       // 滑动窗口大小
+	samples    []float64 // 最近的样本
+	currentPos int       // 当前样本位置
 }
 
 // NewLatencyStats 创建延迟统计
@@ -43,8 +49,8 @@ func NewLatencyStats() *LatencyStats {
 	return &LatencyStats{
 		min:        time.Duration(1<<63 - 1),
 		boundaries: []float64{1, 5, 10, 25, 50, 100, 250, 500, 1000}, // 毫秒
-		buckets:    make([]int64, 10),                               // 9个边界产生10个桶
-		windowSize: 1000,                                            // 保存最近1000个样本
+		buckets:    make([]int64, 10),                                // 9个边界产生10个桶
+		windowSize: 1000,                                             // 保存最近1000个样本
 		samples:    make([]float64, 1000),
 	}
 }
@@ -121,12 +127,12 @@ func (s *LatencyStats) GetDistribution() map[string]int64 {
 
 	dist := make(map[string]int64)
 	dist["0-1ms"] = s.buckets[0]
-	
+
 	for i := 1; i < len(s.boundaries); i++ {
 		key := fmt.Sprintf("%.0f-%.0fms", s.boundaries[i-1], s.boundaries[i])
 		dist[key] = s.buckets[i]
 	}
-	
+
 	key := fmt.Sprintf(">%.0fms", s.boundaries[len(s.boundaries)-1])
 	dist[key] = s.buckets[len(s.buckets)-1]
 

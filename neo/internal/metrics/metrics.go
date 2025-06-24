@@ -89,6 +89,9 @@ var (
 		},
 		[]string{"service", "instance"},
 	)
+
+	// Default 全局默认指标实例
+	Default *Metrics
 )
 
 // Metrics 监控指标管理器
@@ -108,6 +111,9 @@ func init() {
 	registry.MustRegister(requestCounter)
 	registry.MustRegister(messageSizeHistogram)
 	registry.MustRegister(healthGauge)
+
+	// 初始化默认实例
+	Default = NewMetrics()
 }
 
 // NewMetrics 创建监控指标管理器
@@ -151,21 +157,30 @@ func (m *Metrics) StopServer(ctx context.Context) error {
 	return nil
 }
 
-// 以下为指标操作封装函数...
-
-// RecordLatency 记录请求延迟
-func RecordLatency(service, method string, duration time.Duration) {
-	latencyHistogram.WithLabelValues(service, method).Observe(duration.Seconds())
+// RecordConnectionRefused 记录连接拒绝事件
+func (m *Metrics) RecordConnectionRefused() {
+	connectionGauge.WithLabelValues("tcp", "refused").Inc()
 }
 
 // RecordError 记录错误
-func RecordError(service, method, errorType string) {
+func (m *Metrics) RecordError(service, method, errorType string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	errorCounter.WithLabelValues(service, method, errorType).Inc()
 }
 
 // RecordRequest 记录请求
-func RecordRequest(service, method, status string) {
+func (m *Metrics) RecordRequest(service, method, status string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	requestCounter.WithLabelValues(service, method, status).Inc()
+}
+
+// RecordLatency 记录请求延迟
+func (m *Metrics) RecordLatency(service, method string, duration time.Duration) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	latencyHistogram.WithLabelValues(service, method).Observe(duration.Seconds())
 }
 
 // RecordMessageSize 记录消息大小
