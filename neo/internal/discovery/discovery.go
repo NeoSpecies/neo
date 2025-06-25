@@ -2,9 +2,10 @@ package discovery
 
 import (
 	"context"
+	"fmt"
+	"neo/internal/types"
 	"sync"
 	"time"
-	"neo/internal/types"
 )
 
 // Service 服务元数据
@@ -12,7 +13,7 @@ type Service struct {
 	ID        string            `json:"id"`         // 全局唯一ID
 	Name      string            `json:"name"`       // 服务名称
 	Address   string            `json:"address"`    // IPC地址（如unix:///tmp/service.sock）
-	Port      int               `json:"port"`       // 新增：服务端口号
+	Port      int               `json:"port"`       // 服务端口号
 	Metadata  map[string]string `json:"metadata"`   // 扩展元数据
 	Status    string            `json:"status"`     // 状态（healthy/unhealthy）
 	ExpireAt  time.Time         `json:"expire_at"`  // 租约过期时间
@@ -52,7 +53,7 @@ type Event struct {
 // Discovery 服务发现核心组件
 type Discovery struct {
 	storage  types.Storage
-	events   chan types.Event 
+	events   chan types.Event
 	watchers map[string][]chan types.Event
 	mu       sync.RWMutex
 	ctx      context.Context
@@ -71,13 +72,21 @@ func New(storage types.Storage) *Discovery {
 	}
 }
 
-// Register 注册服务
+// Register 注册服务（结构体方法，需通过Discovery实例调用）
 func (d *Discovery) Register(ctx context.Context, s *types.Service) error {
+	// 调试打印：注册请求详情
+	fmt.Printf("[DEBUG] 收到服务注册请求: ID=%s, Name=%s, Address=%s:%d\n", s.ID, s.Name, s.Address, s.Port)
+	fmt.Printf("[DEBUG] 注册元数据: %+v\n", s.Metadata)
+
 	s.UpdatedAt = time.Now()
 	s.ExpireAt = s.UpdatedAt.Add(30 * time.Second)
 	if err := d.storage.Register(ctx, s); err != nil {
+		fmt.Printf("[ERROR] 服务注册失败: %v\n", err)
 		return err
 	}
+
+	// 调试打印：注册成功
+	fmt.Printf("[DEBUG] 服务注册成功: ID=%s, 过期时间=%v\n", s.ID, s.ExpireAt)
 	d.events <- types.Event{Type: types.EventRegistered, Service: s}
 	return nil
 }
@@ -88,18 +97,23 @@ func (d *Discovery) Watch(serviceName string) <-chan types.Event {
 	defer d.mu.Unlock()
 	ch := make(chan types.Event, 10)
 	d.watchers[serviceName] = append(d.watchers[serviceName], ch)
+	fmt.Printf("[DEBUG] 新增服务监听器: 服务名称=%s, 监听器数量=%d\n", serviceName, len(d.watchers[serviceName]))
+
 	go func() {
 		for {
 			select {
 			case event := <-d.events:
 				if event.Service.Name == serviceName {
+					fmt.Printf("[DEBUG] 服务事件触发: 类型=%v, 服务名称=%s, ID=%s\n", event.Type, event.Service.Name, event.Service.ID)
 					select {
 					case ch <- event:
 					default:
+						fmt.Printf("[WARN] 事件通道已满，丢弃事件: %v\n", event.Type)
 					}
 				}
 			case <-d.ctx.Done():
 				close(ch)
+				fmt.Printf("[DEBUG] 监听器已关闭: 服务名称=%s\n", serviceName)
 				return
 			}
 		}

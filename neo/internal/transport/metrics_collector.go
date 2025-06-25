@@ -19,8 +19,8 @@ func NewMetricsCollector() *MetricsCollector {
 
 // CollectRequest 记录请求开始时的指标
 func (m *MetricsCollector) CollectRequest(ctx context.Context, serviceName, method string) time.Time {
-	// 记录请求总数，默认状态为"started"
-	metrics.RecordRequest(metrics.Default, serviceName, method, "started")
+	// 记录请求总数，状态为"started"
+	metrics.RecordRequest(serviceName, method, "started")
 	return time.Now()
 }
 
@@ -35,11 +35,11 @@ func (m *MetricsCollector) CollectResponse(ctx context.Context, serviceName, met
 	if err != nil {
 		status = "error"
 		errorType = err.Error()
-		metrics.RecordError(metrics.Default, serviceName, method, errorType)
+		metrics.RecordError(serviceName, method, errorType)
 	}
 
 	// 更新请求状态为完成
-	metrics.RecordRequest(metrics.Default, serviceName, method, status)
+	metrics.RecordRequest(serviceName, method, status)
 	// 记录延迟指标
-	metrics.RecordLatency(metrics.Default, serviceName, method, duration)
+	metrics.RecordLatency(serviceName, method, duration)
 }

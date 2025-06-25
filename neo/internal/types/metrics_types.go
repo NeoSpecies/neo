@@ -10,9 +10,9 @@ import (
 
 // Metrics 监控指标管理器
 type Metrics struct {
-	Mu       sync.RWMutex      // 修改为RWMutex以支持读写锁
-	Registry *prometheus.Registry
-	Server   *http.Server      // 添加Server字段
+	Mu       sync.RWMutex         // 读写锁保护并发访问
+	Registry *prometheus.Registry // 指标注册表
+	Server   *http.Server         // 监控服务器实例
 }
 
 // NewMetrics 创建新的指标管理器实例

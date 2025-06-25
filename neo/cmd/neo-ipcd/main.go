@@ -10,9 +10,12 @@ import (
 
 	"neo/internal/config"
 	"neo/internal/connection/tcp"
+	"neo/internal/discovery"
 	"neo/internal/ipcprotocol"
 	"neo/internal/transport"
 	"neo/internal/types"
+
+	"github.com/mitchellh/mapstructure"
 )
 
 // workerPoolAdapter 适配transport.WorkerPool到common.WorkerPool接口
@@ -63,11 +66,46 @@ func main() {
 	}
 
 	messageHandler := func(data []byte) ([]byte, error) {
-		req := &types.Request{}
+		// 使用 discovery.IPCRequest 而非 types.Request
+		req := &discovery.IPCRequest{}
 		if err := json.Unmarshal(data, req); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal request: %v", err)
 		}
 
+		// 添加调试日志
+		fmt.Printf("[DEBUG] 处理请求: %+v\n", req)
+
+		// 处理注册请求
+		if req.Action == "register" {
+			service := &types.Service{}
+			if err := mapstructure.Decode(req.Service, service); err != nil {
+				return json.Marshal(map[string]interface{}{
+					"success": false,
+					"error":   fmt.Sprintf("invalid service data: %v", err),
+				})
+			}
+
+			// 调用发现服务的注册方法
+			// 1. 确保已初始化Discovery实例（通常在main函数开头）
+			// 初始化内存存储（使用实际构造函数）
+			storage := discovery.NewInMemoryStorage()
+			discoveryService := discovery.New(storage)
+
+			// 2. 在服务注册处使用实例方法
+			if err := discoveryService.Register(context.Background(), service); err != nil {
+				return json.Marshal(map[string]interface{}{
+					"success": false,
+					"error":   err.Error(),
+				})
+			}
+
+			return json.Marshal(map[string]interface{}{
+				"success": true,
+				"result":  service,
+			})
+		}
+
+		// 原有处理逻辑
 		respData, err := ipcprotocol.ProcessMessage(data, serviceRegistry, adaptedWorkerPool)
 		if err != nil {
 			return nil, err

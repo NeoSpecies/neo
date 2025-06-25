@@ -2,6 +2,7 @@ package tcp
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"strconv"
@@ -11,6 +12,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 
 	"neo/internal/config"
+	"neo/internal/ipcprotocol"
 	"neo/internal/types"
 )
 
@@ -185,18 +187,23 @@ func (s *TCPServer) acceptLoop() {
 				case <-s.ctx.Done():
 					return
 				default:
-					fmt.Printf("failed to accept connection: %v\n", err)
+					fmt.Printf("[DEBUG] 接受连接失败: %v\n", err)
 					time.Sleep(1 * time.Second)
 				}
 				continue
 			}
 
+			// 新增调试打印：连接信息
+			remoteAddr := conn.RemoteAddr().String()
+			fmt.Printf("[DEBUG] 新连接建立: %s\n", remoteAddr)
+
 			// 检查连接限制
-		s.connections.Mu.RLock()
-		currentConnCount := len(s.connections.Connections)
-		s.connections.Mu.RUnlock()
+			s.connections.Mu.RLock()
+			currentConnCount := len(s.connections.Connections)
+			s.connections.Mu.RUnlock()
 
 			if currentConnCount >= s.config.MaxConnections {
+				fmt.Printf("[DEBUG] 连接数超限(%d/%d)，拒绝连接: %s\n", currentConnCount, s.config.MaxConnections, remoteAddr)
 				conn.Close()
 				fmt.Println("connection rejected - server is at capacity")
 				continue
@@ -213,8 +220,8 @@ func (s *TCPServer) acceptLoop() {
 			)
 
 			// 添加到连接池
-		s.connections.Mu.Lock()
-		s.connections.Connections = append(s.connections.Connections, &types.Connection{
+			s.connections.Mu.Lock()
+			s.connections.Connections = append(s.connections.Connections, &types.Connection{
 				Conn:     conn,
 				Pool:     s.connections,
 				Stats:    types.NewConnectionStats(),
@@ -222,7 +229,7 @@ func (s *TCPServer) acceptLoop() {
 				InUse:    true,
 				Closed:   false,
 			})
-		s.connections.Mu.Unlock()
+			s.connections.Mu.Unlock()
 
 			// 在任务通道中处理连接
 			select {
@@ -291,35 +298,59 @@ func NewTCPHandler(
 
 // Start 开始处理连接
 func (h *TCPHandler) Start() {
-	// 实现消息读取和处理逻辑
-	buf := make([]byte, h.maxMsgSize)
+	// 创建编解码器实例
+	codec := NewCodec(h.Conn, h.Conn)
+
 	for {
 		// 设置读取超时
 		h.Conn.SetReadDeadline(time.Now().Add(h.readTimeout))
 
-		// 读取消息
-		n, err := h.Conn.Read(buf)
+		// 使用codec读取并解析IPC消息
+		messageFrame, err := codec.ReadIPCMessage()
 		if err != nil {
-			fmt.Printf("read error: %v\n", err)
+			fmt.Printf("[ERROR] 消息解析失败: %v\n", err)
 			return
 		}
 
-		// 处理消息
-		response, err := h.callback(buf[:n])
+		// 将解析后的消息帧转换为JSON字节
+		requestData, err := json.Marshal(messageFrame)
 		if err != nil {
-			fmt.Printf("callback error: %v\n", err)
-			// 发送错误响应
-			response = []byte(fmt.Sprintf("error: %v", err))
+			fmt.Printf("[ERROR] 消息序列化失败: %v\n", err)
+			return
+		}
+
+		// 调用回调处理解析后的消息
+		response, err := h.callback(requestData)
+		if err != nil {
+			fmt.Printf("[ERROR] 消息处理失败: %v\n", err)
+			// 返回结构化错误响应
+			errorResp := map[string]interface{}{
+				"error": map[string]string{
+					"code":    "INVALID_CHECKSUM",
+					"message": "校验和不匹配，请检查协议实现",
+				},
+			}
+			response, _ = json.Marshal(errorResp)
 		}
 
 		// 设置写入超时
 		h.Conn.SetWriteDeadline(time.Now().Add(h.writeTimeout))
 
 		// 发送响应
-		_, err = h.Conn.Write(response)
-		if err != nil {
-			fmt.Printf("write error: %v\n", err)
+		responseFrame := &ipcprotocol.MessageFrame{
+			Type:    ipcprotocol.MessageTypeResponse,
+			Payload: response,
+		}
+
+		// 添加详细错误处理
+		if err := codec.WriteIPCMessage(responseFrame); err != nil {
+			fmt.Printf("[ERROR] 发送响应失败: %v\n", err)
+			// 尝试直接写入原始响应（应急方案）
+			if _, writeErr := h.Conn.Write(response); writeErr != nil {
+				fmt.Printf("[ERROR] 直接写入响应失败: %v\n", writeErr)
+			}
 			return
 		}
+		fmt.Printf("[DEBUG] 响应已发送，长度: %d字节\n", len(response))
 	}
 }

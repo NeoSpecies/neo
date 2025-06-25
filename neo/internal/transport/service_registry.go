@@ -1,61 +1,61 @@
 package transport
 
 import (
-    "sync"
-    "neo/internal/common"
-    "neo/internal/types"
+	"neo/internal/common"
+	"neo/internal/types"
+	"sync"
 )
 
 // ServiceRegistry 服务注册表，实现common.ServiceRegistry接口
 type ServiceRegistry struct {
-    mu       sync.RWMutex
-    handlers map[string]common.ServiceHandler
+	mu       sync.RWMutex
+	handlers map[string]common.ServiceHandler
 }
 
 // NewServiceRegistry 创建新的服务注册表
 func NewServiceRegistry() *ServiceRegistry {
-    return &ServiceRegistry{
-        handlers: make(map[string]common.ServiceHandler),
-    }
+	return &ServiceRegistry{
+		handlers: make(map[string]common.ServiceHandler),
+	}
 }
 
 // Register 注册服务处理器
 func (r *ServiceRegistry) Register(service string, handler common.ServiceHandler) {
-    if service == "" {
-        panic("服务名称不能为空")
-    }
-    if handler == nil {
-        panic("处理器不能为空")
-    }
+	if service == "" {
+		panic("服务名称不能为空")
+	}
+	if handler == nil {
+		panic("处理器不能为空")
+	}
 
-    r.mu.Lock()
-    defer r.mu.Unlock()
+	r.mu.Lock()
+	defer r.mu.Unlock()
 
-    if _, exists := r.handlers[service]; exists {
-        panic("服务已注册: " + service)
-    }
-    r.handlers[service] = handler
+	if _, exists := r.handlers[service]; exists {
+		panic("服务已注册: " + service)
+	}
+	r.handlers[service] = handler
 }
 
 // handlerWrapper 包装函数以实现ServiceHandler接口
 type handlerWrapper struct {
-    handler func(*types.Request) (*types.Response, error)
+	handler func(*types.Request) (*types.Response, error)
 }
 
 // Handle 实现common.ServiceHandler接口
 func (h *handlerWrapper) Handle(req *types.Request) (*types.Response, error) {
-    return h.handler(req)
+	return h.handler(req)
 }
 
 // RegisterFunc 注册服务处理器函数
 func (r *ServiceRegistry) RegisterFunc(service string, handler func(*types.Request) (*types.Response, error)) {
-    r.Register(service, &handlerWrapper{handler: handler})
+	r.Register(service, &handlerWrapper{handler: handler})
 }
 
 // GetHandler 获取服务处理器，实现common.ServiceRegistry接口
 func (r *ServiceRegistry) GetHandler(service string) (common.ServiceHandler, bool) {
-    r.mu.RLock()
-    defer r.mu.RUnlock()
-    handler, exists := r.handlers[service]
-    return handler, exists
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	handler, exists := r.handlers[service]
+	return handler, exists
 }
