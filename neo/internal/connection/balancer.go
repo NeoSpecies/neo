@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"neo/internal/metrics"
+	"neo/internal/types"
 )
 
 // LoadBalanceStrategy 负载均衡策略
@@ -19,13 +20,13 @@ const (
 )
 
 // MetricsCollector 指标收集器接口
- type MetricsCollector interface {
+type MetricsCollector interface {
 	CollectRequest(ctx context.Context, serviceName, method string) time.Time
 	CollectResponse(ctx context.Context, serviceName, method string, startTime time.Time, err error)
 }
 
 // Balancer 负载均衡器接口
- type Balancer interface {
+type Balancer interface {
 	// Pick 选择一个连接
 	Pick(availableConns []interface{}) (interface{}, error)
 	// Release 释放连接
@@ -87,8 +88,6 @@ func (r *RoundRobinBalancer) Pick(availableConns []interface{}) (interface{}, er
 			ctx := context.Background()
 			startTime := time.Now()
 			r.metricsCollector.CollectResponse(ctx, r.serviceName, r.methodName, startTime, err)
-		} else {
-			metrics.Default.RecordError(r.serviceName, r.methodName, "no_connections")
 		}
 		return nil, err
 	}
@@ -107,11 +106,16 @@ func (r *RoundRobinBalancer) Release(conn interface{}, err error) {
 	startTime := time.Now()
 
 	if err != nil {
-		metrics.Default.RecordError(r.serviceName, r.methodName, err.Error())
+		if r.metricsCollector != nil {
+			ctx := context.Background()
+			r.metricsCollector.CollectResponse(ctx, r.serviceName, r.methodName, startTime, err)
+		}
 		r.Remove(conn)
 	} else {
-		duration := time.Since(startTime)
-		metrics.Default.RecordLatency(r.serviceName, r.methodName, duration)
+		if r.metricsCollector != nil {
+			ctx := context.Background()
+			r.metricsCollector.CollectResponse(ctx, r.serviceName, r.methodName, startTime, nil)
+		}
 	}
 }
 
@@ -207,4 +211,27 @@ func (w *WeightedBalancer) Len() int {
 // Close 关闭负载均衡器（加权策略）
 func (w *WeightedBalancer) Close() {
 	// 实现关闭逻辑
+}
+
+// Balancer 负载均衡器接口
+// Select 实现types.Balancer接口
+func (r *RoundRobinBalancer) Select(connections []*types.Connection) (*types.Connection, error) {
+	if len(connections) == 0 {
+		err := errors.New("没有可用连接")
+		if r.metricsCollector != nil {
+			// 使用metricsCollector代替metrics.Default
+			ctx := context.Background()
+			startTime := time.Now()
+			r.metricsCollector.CollectResponse(ctx, r.serviceName, r.methodName, startTime, err)
+		}
+		return nil, err
+	}
+
+	// 轮询选择连接
+	r.mu.Lock()
+	conn := connections[r.index]
+	r.index = (r.index + 1) % len(connections)
+	r.mu.Unlock()
+
+	return conn, nil
 }

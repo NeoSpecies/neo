@@ -1,8 +1,24 @@
-# IPC服务配置
+# NEO IPC 服务器配置
 ipc:
-  host: 127.0.0.1        # 绑定地址
-  port: 9090             # 服务端口
-  max_connections: 1000  # 最大连接数
+  host: 127.0.0.1                # 绑定地址
+  port: 9090                     # 服务端口
+  max_connections: 1000          # 最大连接数
+  max_message_size: 4194304      # 最大消息大小(4MB)
+  read_timeout: 30s              # 读取超时
+  write_timeout: 10s             # 写入超时
+  connection_timeout: 60s        # 连接超时
+  worker_count: 10               # 工作池大小
+  use_new_architecture: true     # 启用新架构
+
+metrics:
+  enabled: true                  # 是否启用指标收集
+  prometheus_address: :9091      # Prometheus暴露地址
+  collection_interval: 10s       # 指标收集间隔
+
+logging:
+  level: info                    # 日志级别
+  output: stdout                 # 日志输出位置
+  file_path: /var/log/neo-ipcd/  # 日志文件路径(当output为file时有效)
 
 # 连接池配置 (确保没有重复的pool配置块)
 pool:

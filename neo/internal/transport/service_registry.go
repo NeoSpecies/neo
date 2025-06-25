@@ -3,7 +3,7 @@ package transport
 import (
     "sync"
     "neo/internal/common"
-    "neo/internal/ipcprotocol"
+    "neo/internal/types"
 )
 
 // ServiceRegistry 服务注册表，实现common.ServiceRegistry接口
@@ -37,9 +37,19 @@ func (r *ServiceRegistry) Register(service string, handler common.ServiceHandler
     r.handlers[service] = handler
 }
 
+// handlerWrapper 包装函数以实现ServiceHandler接口
+type handlerWrapper struct {
+    handler func(*types.Request) (*types.Response, error)
+}
+
+// Handle 实现common.ServiceHandler接口
+func (h *handlerWrapper) Handle(req *types.Request) (*types.Response, error) {
+    return h.handler(req)
+}
+
 // RegisterFunc 注册服务处理器函数
-func (r *ServiceRegistry) RegisterFunc(service string, handler func(request *ipcprotocol.Request) (*ipcprotocol.Response, error)) {
-    r.Register(service, common.ServiceHandlerFunc(handler))
+func (r *ServiceRegistry) RegisterFunc(service string, handler func(*types.Request) (*types.Response, error)) {
+    r.Register(service, &handlerWrapper{handler: handler})
 }
 
 // GetHandler 获取服务处理器，实现common.ServiceRegistry接口

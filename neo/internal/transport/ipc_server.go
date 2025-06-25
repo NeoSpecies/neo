@@ -6,37 +6,32 @@ import (
 	"fmt"
 	"log"
 	"sync"
-	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
 
 	"neo/internal/common"
-	"neo/internal/config"
-	"neo/internal/connection"
 	"neo/internal/connection/tcp"
 	"neo/internal/ipcprotocol"
-	"neo/internal/metrics"
+	"neo/internal/types"
 )
 
 // IPC服务器配置
 type IPCServerConfig struct {
-	TCPConfig       tcp.ServerConfig
+	TCPConfig       types.TCPConfig
 	WorkerPoolSize  int
 	WorkerQueueSize int
 }
 
 // 从全局配置创建IPC服务器配置
-func NewIPCServerConfigFromGlobal(globalConfig *config.GlobalConfig) IPCServerConfig {
-	// 创建默认连接配置
-	defaultConnConfig := &connection.Config{
-		ConnectTimeout: 5 * time.Second,
-		IdleTimeout:    30 * time.Second,
-	}
-
+func NewIPCServerConfigFromGlobal(globalConfig *types.GlobalConfig) IPCServerConfig {
 	return IPCServerConfig{
-		TCPConfig: tcp.ServerConfig{
-			Address:           fmt.Sprintf("%s:%d", globalConfig.IPC.Host, globalConfig.IPC.Port),
+		TCPConfig: types.TCPConfig{
 			MaxConnections:    globalConfig.IPC.MaxConnections,
-			ConnectionTimeout: time.Duration(globalConfig.Pool.IdleTimeout) * time.Second,
-			HandlerConfig:     defaultConnConfig,
+			MaxMsgSize:        globalConfig.Protocol.MaxMessageSize,
+			ReadTimeout:       globalConfig.IPC.ReadTimeout,
+			WriteTimeout:      globalConfig.IPC.WriteTimeout,
+			WorkerCount:       globalConfig.IPC.WorkerCount,
+			ConnectionTimeout: globalConfig.IPC.ConnectionTimeout,
 		},
 		WorkerPoolSize:  10,
 		WorkerQueueSize: 100,
@@ -86,7 +81,7 @@ type IPCServer struct {
 	tcpServer       common.Server
 	serviceRegistry *ServiceRegistry
 	workerPool      *WorkerPool
-	metrics         *metrics.Metrics
+	metrics         *types.Metrics
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -102,7 +97,8 @@ func NewIPCServer(config IPCServerConfig) (*IPCServer, error) {
 	serviceRegistry := NewServiceRegistry()
 
 	// 初始化指标收集器
-	metricsCollector := metrics.NewMetrics()
+	registry := prometheus.NewRegistry()
+	metricsCollector := types.NewMetrics(registry)
 
 	// 初始化工作池
 	workerPool := NewWorkerPool(
@@ -110,21 +106,18 @@ func NewIPCServer(config IPCServerConfig) (*IPCServer, error) {
 		config.WorkerQueueSize,
 	)
 
-	// 创建工作池适配器（关键修复点）
+	// 创建工作池适配器
 	workerPoolAdaptor := &workerPoolAdapter{
 		workerPool: workerPool,
 	}
 
-	// 创建TCP服务器 - 使用接口类型而非具体实现
+	// 创建TCP服务器
 	var tcpServer common.Server
-	if config.TCPConfig.HandlerConfig == nil {
-		config.TCPConfig.HandlerConfig = &connection.Config{}
-	}
-	// 通过工厂方法创建TCP服务器，传递适配器而非原始workerPool
+	// 通过工厂方法创建TCP服务器
 	tcpServer, err := createTCPServer(
 		&config.TCPConfig,
 		serviceRegistry,
-		workerPoolAdaptor, // 使用适配器解决接口兼容问题
+		workerPoolAdaptor,
 		metricsCollector,
 	)
 	if err != nil {
@@ -144,14 +137,14 @@ func NewIPCServer(config IPCServerConfig) (*IPCServer, error) {
 	}, nil
 }
 
-// 添加TCP服务器工厂方法，避免直接导入tcp包
-func createTCPServer(config common.ServerConfig, registry common.ServiceRegistry, workerPool common.WorkerPool, metrics *metrics.Metrics) (common.Server, error) {
-	// 类型断言，将common.ServerConfig转换为*tcp.ServerConfig
-	tcpConfig, ok := config.(*tcp.ServerConfig)
-	if !ok {
-		return nil, errors.New("invalid server config type")
+// 添加TCP服务器工厂方法
+func createTCPServer(config *types.TCPConfig, registry *ServiceRegistry, workerPool common.WorkerPool, metrics *types.Metrics) (common.Server, error) {
+	// 创建消息回调函数
+	callback := func(data []byte) ([]byte, error) {
+		// 实现消息处理逻辑
+		return ipcprotocol.ProcessMessage(data, registry, workerPool)
 	}
-	return tcp.NewServer(tcpConfig, registry, workerPool, metrics)
+	return tcp.NewServer(config, callback)
 }
 
 // 启动服务器
@@ -201,65 +194,14 @@ func (s *IPCServer) Stop() error {
 	// 停止工作池
 	s.workerPool.Stop()
 
-	// 等待所有协程退出
+	// 等待所有goroutine完成
 	s.wg.Wait()
 
 	s.started = false
-	log.Println("IPC服务器已成功停止")
 	return nil
 }
 
 // 注册服务处理器
-func (s *IPCServer) RegisterService(name string, handler common.ServiceHandler) {
-	s.serviceRegistry.Register(name, handler)
-	log.Printf("已注册服务: %s", name)
-}
-
-// 注册服务处理器函数
-func (s *IPCServer) RegisterServiceFunc(name string, handler func(request *ipcprotocol.Request) (*ipcprotocol.Response, error)) {
-	s.serviceRegistry.RegisterFunc(name, handler)
-	log.Printf("已注册服务函数: %s", name)
-}
-
-// 获取服务注册表
-func (s *IPCServer) ServiceRegistry() *ServiceRegistry {
-	return s.serviceRegistry
-}
-
-// 获取指标收集器
-func (s *IPCServer) Metrics() *metrics.Metrics {
-	return s.metrics
-}
-
-// 获取TCP服务器
-func (s *IPCServer) TCPServer() common.Server {
-	return s.tcpServer
-}
-
-// 获取工作池
-func (s *IPCServer) WorkerPool() *WorkerPool {
-	return s.workerPool
-}
-
-// 判断服务器是否已启动
-func (s *IPCServer) IsStarted() bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.started
-}
-
-// 初始化TCP服务器
-func (s *IPCServer) initTCPServer() error {
-	// 创建工作池适配器
-	workerPoolAdaptor := &workerPoolAdapter{
-		workerPool: s.workerPool,
-	}
-	// 使用适配器作为WorkerPool参数
-	tcpServer, err := tcp.NewServer(&s.config.TCPConfig, s.serviceRegistry, workerPoolAdaptor, s.metrics)
-	if err != nil {
-		return err
-	}
-
-	s.tcpServer = tcpServer
-	return nil
+func (s *IPCServer) RegisterService(serviceName string, handler common.ServiceHandler) {
+	s.serviceRegistry.Register(serviceName, handler)
 }

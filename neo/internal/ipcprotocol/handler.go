@@ -2,14 +2,11 @@ package ipcprotocol
 
 import (
 	"bufio"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
 	"sync"
-
-	// "neo/internal/utils" // 注释掉未定义的utils导入
+	"neo/internal/types"
 )
 
 // 协议帧分隔符
@@ -17,7 +14,7 @@ const FrameDelimiter = '\x00'
 
 // 消息处理器接口
 type MessageHandler interface {
-	HandleRequest(request *Request) (*Response, error)
+	HandleRequest(request *types.Request) (*types.Response, error)
 	HandleEvent(event *MessageFrame) error
 }
 
@@ -87,8 +84,8 @@ func (c *Codec) WriteFrame(frame *MessageFrame) error {
 }
 
 // 解析请求
-func ParseRequest(payload []byte) (*Request, error) {
-	var request Request
+func ParseRequest(payload []byte) (*types.Request, error) {
+	var request types.Request
 	if err := json.Unmarshal(payload, &request); err != nil {
 		return nil, err
 	}
@@ -108,8 +105,8 @@ func ParseRequest(payload []byte) (*Request, error) {
 }
 
 // 解析响应
-func ParseResponse(payload []byte) (*Response, error) {
-	var response Response
+func ParseResponse(payload []byte) (*types.Response, error) {
+	var response types.Response
 	if err := json.Unmarshal(payload, &response); err != nil {
 		return nil, err
 	}
@@ -119,14 +116,4 @@ func ParseResponse(payload []byte) (*Response, error) {
 	}
 
 	return &response, nil
-}
-
-// 生成唯一请求ID - 实现UUID生成功能
-func NewRequestID() string {
-	b := make([]byte, 16)
-	_, err := rand.Read(b)
-	if err != nil {
-		panic(err) // 在实际应用中应妥善处理错误
-	}
-	return hex.EncodeToString(b)
 }

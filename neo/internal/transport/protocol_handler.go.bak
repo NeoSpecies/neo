@@ -54,7 +54,7 @@ func (h *DefaultProtocolHandler) BuildResponse(req *ipcprotocol.MessageFrame, re
 	var request struct {
 		RequestID string `json:"request_id"`
 	}
-	if err := json.Unmarshal(req.Payload, &request); err == nil {
+	if err2 := json.Unmarshal(req.Payload, &request); err2 == nil {
 		responsePayload.RequestID = request.RequestID
 	}
 

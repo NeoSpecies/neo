@@ -2,246 +2,324 @@ package tcp
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"log"
 	"net"
+	"strconv"
 	"sync"
 	"time"
 
-	"neo/internal/common"
-	"neo/internal/connection"
-	"neo/internal/metrics"
+	"github.com/prometheus/client_golang/prometheus"
+
+	"neo/internal/config"
+	"neo/internal/types"
 )
 
-// TCP服务器配置
+// ServerConfig 定义TCP服务器配置
 type ServerConfig struct {
-	Address           string
-	MaxConnections    int
-	ConnectionTimeout time.Duration
-	HandlerConfig     *connection.Config
+	MaxConnections    int           `yaml:"max_connections"`
+	MaxMsgSize        int           `yaml:"max_message_size"`
+	ReadTimeout       time.Duration `yaml:"read_timeout"`
+	WriteTimeout      time.Duration `yaml:"write_timeout"`
+	WorkerCount       int           `yaml:"worker_count"`
+	ConnectionTimeout time.Duration `yaml:"connection_timeout"`
 }
 
 // 实现common.ServerConfig接口
 func (c *ServerConfig) GetAddress() string {
-	return c.Address
+	globalConfig := config.GetGlobalConfig()
+	return net.JoinHostPort(globalConfig.IPC.Host, strconv.Itoa(globalConfig.IPC.Port))
 }
 
+// 实现common.ServerConfig接口
 func (c *ServerConfig) GetMaxConnections() int {
 	return c.MaxConnections
 }
 
+// 实现common.ServerConfig接口
 func (c *ServerConfig) GetConnectionTimeout() time.Duration {
 	return c.ConnectionTimeout
 }
 
+// 实现common.ServerConfig接口
 func (c *ServerConfig) GetHandlerConfig() interface{} {
-	return c.HandlerConfig
+	return nil // 根据需要实现
 }
 
-// TCP服务器
-type Server struct {
-	config          *ServerConfig
-	listener        net.Listener
-	handler         *ConnectionHandler
-	serviceRegistry common.ServiceRegistry
-	workerPool      common.WorkerPool
-	metrics         *metrics.Metrics
-
-	ctx    context.Context
-	cancel context.CancelFunc
-	wg     sync.WaitGroup
-
-	mu                sync.Mutex
-	activeConnections int
-	started           bool
+// TCPServer 管理TCP连接和消息处理
+type TCPServer struct {
+	listener    net.Listener
+	config      *ServerConfig
+	metrics     *types.Metrics
+	connections *types.TCPConnectionPool
+	callback    types.MessageCallback
+	wg          sync.WaitGroup
+	ctx         context.Context
+	cancel      context.CancelFunc
+	taskChan    chan func()
 }
 
 // NewServer 创建新的TCP服务器
 func NewServer(
-	config *ServerConfig,
-	serviceRegistry common.ServiceRegistry,
-	workerPool common.WorkerPool,
-	metrics *metrics.Metrics,
-) (*Server, error) {
-	// 验证配置
-	if config.Address == "" {
-		return nil, errors.New("服务器地址不能为空")
-	}
-	if config.MaxConnections <= 0 {
-		config.MaxConnections = 100 // 默认最大连接数
-	}
-	if config.HandlerConfig == nil {
-		return nil, errors.New("处理器配置不能为空")
-	}
-
-	// 创建连接池
-	// 修复：实现真正的TCP连接工厂函数
-	poolFactory := func() (net.Conn, error) {
-		// 从配置获取目标服务器地址（此处假设为远程服务器地址，需根据实际情况调整）
-		// 注意：实际应用中应从配置或参数中获取目标地址
-		targetAddr := "127.0.0.1:9090"
-		// 修复字段名拼写错误：ConnectTimeout -> ConnectionTimeout
-		conn, err := net.DialTimeout("tcp", targetAddr, config.ConnectionTimeout)
-		if err != nil {
-			return nil, fmt.Errorf("连接目标服务器失败: %w", err)
-		}
-		return conn, nil
-	}
-	connectionPool, err := connection.NewTCPConnectionPool(poolFactory)
-	if err != nil {
-		return nil, fmt.Errorf("创建连接池失败: %w", err)
-	}
-
-	// 创建连接处理器
-	handler := NewConnectionHandler(config.HandlerConfig, connectionPool)
-
+	config *types.TCPConfig,
+	callback types.MessageCallback,
+) (*TCPServer, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 
-	return &Server{
-		config:            config,
-		handler:           handler,
-		serviceRegistry:   serviceRegistry,
-		workerPool:        workerPool,
-		metrics:           metrics,
-		activeConnections: 0,
-		listener:          nil,
-		started:           false,
-		mu:                sync.Mutex{},
-		ctx:               ctx,
-		cancel:            cancel,
+	// 创建任务通道
+	taskChan := make(chan func(), config.WorkerCount)
+
+	// 启动工作协程
+	for i := 0; i < config.WorkerCount; i++ {
+		go func() {
+			for task := range taskChan {
+				task()
+			}
+		}()
+	}
+
+	// 创建连接池配置
+	poolConfig := types.Config{
+		MaxSize:           int(config.MaxConnections),
+		MinSize:           10,
+		IdleTimeout:       30 * time.Second,
+		KeepAliveInterval: 5 * time.Second,
+	}
+
+	// 创建连接池（使用正确的构造函数）
+	connections := &types.TCPConnectionPool{
+		Config:            poolConfig,
+		MaxSize:           int(config.MaxConnections),
+		MinSize:           10,
+		IdleTimeout:       30 * time.Second,
+		KeepAliveInterval: 5 * time.Second,
+		Mu:                &sync.RWMutex{},
+		Connections:       make([]*types.Connection, 0),
+		Done:              make(chan struct{}),
+		WaitConn:          make(chan struct{}, config.MaxConnections),
+	}
+
+	// 创建指标实例
+	metrics := &types.Metrics{
+		Registry: prometheus.NewRegistry(),
+	}
+
+	// 转换TCPConfig为ServerConfig
+	serverConfig := &ServerConfig{
+		MaxConnections:    config.MaxConnections,
+		MaxMsgSize:        config.MaxMsgSize,
+		ReadTimeout:       config.ReadTimeout,
+		WriteTimeout:      config.WriteTimeout,
+		WorkerCount:       config.WorkerCount,
+		ConnectionTimeout: config.ConnectionTimeout,
+	}
+
+	return &TCPServer{
+		config:      serverConfig,
+		metrics:     metrics,
+		connections: connections,
+		callback:    callback,
+		ctx:         ctx,
+		cancel:      cancel,
+		taskChan:    taskChan,
 	}, nil
 }
 
-// 启动服务器
-func (s *Server) Start() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+// Start 开始监听和接受连接
+func (s *TCPServer) Start() error {
+	address := s.config.GetAddress()
 
-	if s.started {
-		return errors.New("服务器已启动")
-	}
-
-	// 创建监听器
-	listener, err := net.Listen("tcp", s.config.Address)
+	listener, err := net.Listen("tcp", address)
 	if err != nil {
-		return fmt.Errorf("创建TCP监听器失败: %w", err)
+		return fmt.Errorf("failed to listen on %s: %v", address, err)
 	}
 
 	s.listener = listener
-	s.started = true
+	fmt.Printf("TCP server started on %s\n", address)
 
-	log.Printf("TCP服务器已启动，监听地址: %s", s.config.Address)
-
-	// 启动接受连接的协程
 	s.wg.Add(1)
-	go s.acceptConnections()
+	go s.acceptLoop()
+	return nil
+}
+
+// Stop 关闭服务器并清理资源
+func (s *TCPServer) Stop() error {
+	defer fmt.Println("TCP server stopped")
+	defer s.cancel()
+
+	// 关闭任务通道
+	close(s.taskChan)
+
+	// 关闭监听器
+	if err := s.listener.Close(); err != nil {
+		fmt.Printf("failed to close listener: %v\n", err)
+	}
+
+	// 关闭所有连接
+	s.connections.Mu.Lock()
+	for _, conn := range s.connections.Connections {
+		if !conn.Closed {
+			conn.Conn.Close()
+			conn.Closed = true
+		}
+	}
+	s.connections.Mu.Unlock()
+
+	// 等待所有goroutine完成
+	s.wg.Wait()
 
 	return nil
 }
 
-// 接受连接
-func (s *Server) acceptConnections() {
-	defer func() {
-		s.wg.Done()
-		log.Println("TCP连接接受循环已退出")
-	}()
+// acceptLoop 持续接受新连接
+func (s *TCPServer) acceptLoop() {
+	defer s.wg.Done()
 
 	for {
 		select {
 		case <-s.ctx.Done():
 			return
 		default:
-			// 接受新连接
 			conn, err := s.listener.Accept()
 			if err != nil {
-				// 检查是否是关闭错误
 				select {
 				case <-s.ctx.Done():
 					return
 				default:
-					log.Printf("接受TCP连接失败: %v", err)
-					// 短暂延迟后重试
-					time.Sleep(100 * time.Millisecond)
-					continue
+					fmt.Printf("failed to accept connection: %v\n", err)
+					time.Sleep(1 * time.Second)
 				}
-			}
-
-			// 设置连接超时
-			if s.config.ConnectionTimeout > 0 {
-				conn.SetDeadline(time.Now().Add(s.config.ConnectionTimeout))
-			}
-
-			// 检查连接数限制
-			s.mu.Lock()
-			if s.activeConnections >= s.config.MaxConnections {
-				s.mu.Unlock()
-				conn.Close()
-				// 记录连接拒绝指标 - 修复metrics调用
-				if s.metrics != nil {
-					s.metrics.RecordError("tcp", "connection", "refused")
-				}
-				log.Printf("已达到最大连接数限制: %d", s.config.MaxConnections)
 				continue
 			}
-			s.activeConnections++
-			s.mu.Unlock()
 
-			// 处理连接
-			go func() {
+			// 检查连接限制
+		s.connections.Mu.RLock()
+		currentConnCount := len(s.connections.Connections)
+		s.connections.Mu.RUnlock()
+
+			if currentConnCount >= s.config.MaxConnections {
+				conn.Close()
+				fmt.Println("connection rejected - server is at capacity")
+				continue
+			}
+
+			// 创建连接处理器
+			handler := NewTCPHandler(
+				conn,
+				s.callback,
+				s.metrics,
+				s.config.MaxMsgSize,
+				s.config.ReadTimeout,
+				s.config.WriteTimeout,
+			)
+
+			// 添加到连接池
+		s.connections.Mu.Lock()
+		s.connections.Connections = append(s.connections.Connections, &types.Connection{
+				Conn:     conn,
+				Pool:     s.connections,
+				Stats:    types.NewConnectionStats(),
+				LastUsed: time.Now(),
+				InUse:    true,
+				Closed:   false,
+			})
+		s.connections.Mu.Unlock()
+
+			// 在任务通道中处理连接
+			select {
+			case s.taskChan <- func() {
 				defer func() {
-					s.mu.Lock()
-					s.activeConnections--
-					s.mu.Unlock()
+					s.connections.Mu.Lock()
+					// 从连接池移除连接
+					for i, c := range s.connections.Connections {
+						if c.Conn == conn {
+							s.connections.Connections = append(s.connections.Connections[:i], s.connections.Connections[i+1:]...)
+							break
+						}
+					}
+					s.connections.Mu.Unlock()
+
+					if r := recover(); r != nil {
+						fmt.Printf("connection handler panicked: %v\n", r)
+					}
 				}()
-				s.handler.HandleConnection(conn)
-			}()
+
+				// 处理连接
+				handler.Start()
+			}:
+			default:
+				conn.Close()
+				fmt.Println("task queue is full, connection rejected")
+			}
 		}
 	}
 }
 
-// 优雅关闭服务器
-func (s *Server) Stop() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+// GetConnectionCount 返回当前活动连接数
+func (s *TCPServer) GetConnectionCount() int {
+	s.connections.Mu.RLock()
+	defer s.connections.Mu.RUnlock()
+	return len(s.connections.Connections)
+}
 
-	if !s.started {
-		return errors.New("服务器未启动")
+// TCPHandler 处理单个TCP连接
+type TCPHandler struct {
+	Conn         net.Conn
+	callback     types.MessageCallback
+	metrics      *types.Metrics
+	maxMsgSize   int
+	readTimeout  time.Duration
+	writeTimeout time.Duration
+}
+
+// NewTCPHandler 创建新的TCP连接处理器
+func NewTCPHandler(
+	conn net.Conn,
+	callback types.MessageCallback,
+	metrics *types.Metrics,
+	maxMsgSize int,
+	readTimeout, writeTimeout time.Duration,
+) *TCPHandler {
+	return &TCPHandler{
+		Conn:         conn,
+		callback:     callback,
+		metrics:      metrics,
+		maxMsgSize:   maxMsgSize,
+		readTimeout:  readTimeout,
+		writeTimeout: writeTimeout,
 	}
+}
 
-	log.Println("正在关闭TCP服务器...")
+// Start 开始处理连接
+func (h *TCPHandler) Start() {
+	// 实现消息读取和处理逻辑
+	buf := make([]byte, h.maxMsgSize)
+	for {
+		// 设置读取超时
+		h.Conn.SetReadDeadline(time.Now().Add(h.readTimeout))
 
-	// 取消上下文
-	s.cancel()
+		// 读取消息
+		n, err := h.Conn.Read(buf)
+		if err != nil {
+			fmt.Printf("read error: %v\n", err)
+			return
+		}
 
-	// 关闭监听器
-	if s.listener != nil {
-		s.listener.Close()
+		// 处理消息
+		response, err := h.callback(buf[:n])
+		if err != nil {
+			fmt.Printf("callback error: %v\n", err)
+			// 发送错误响应
+			response = []byte(fmt.Sprintf("error: %v", err))
+		}
+
+		// 设置写入超时
+		h.Conn.SetWriteDeadline(time.Now().Add(h.writeTimeout))
+
+		// 发送响应
+		_, err = h.Conn.Write(response)
+		if err != nil {
+			fmt.Printf("write error: %v\n", err)
+			return
+		}
 	}
-
-	// 等待所有协程退出
-	s.wg.Wait()
-
-	s.started = false
-	log.Println("TCP服务器已关闭")
-	return nil
-}
-
-// 获取当前活动连接数
-func (s *Server) ActiveConnections() int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.activeConnections
-}
-
-// 获取服务器配置
-func (s *Server) Config() *ServerConfig {
-	return s.config
-}
-
-// 判断服务器是否已启动
-func (s *Server) IsStarted() bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.started
 }

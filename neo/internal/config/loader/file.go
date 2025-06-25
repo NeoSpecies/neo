@@ -1,24 +1,34 @@
 package loader
 
 import (
-	"fmt"
-	"os"
-	"neo/internal/config"
+	"io/ioutil"
 	"gopkg.in/yaml.v3"
+	"neo/internal/config"
 )
 
-func LoadFromFile(path string, cfg *config.GlobalConfig) error {
-	data, err := os.ReadFile(path)
+// FileLoader 从文件加载配置
+type FileLoader struct {
+	path string
+}
+
+// NewFileLoader 创建新的文件配置加载器
+func NewFileLoader(path string) *FileLoader {
+	return &FileLoader{path: path}
+}
+
+// Load 加载并解析配置文件
+func (l *FileLoader) Load() (*config.GlobalConfig, error) {
+	// 读取文件内容
+	data, err := ioutil.ReadFile(l.path)
 	if err != nil {
-		fmt.Printf("读取文件 %s 时出错: %v\n", path, err)
-		return err
+		return nil, err
 	}
 
-	err = yaml.Unmarshal(data, cfg)
-	if err != nil {
-		fmt.Printf("解析 YAML 文件 %s 时出错: %v\n", path, err)
-		return err
+	// 解析YAML
+	var cfg config.GlobalConfig
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return nil, err
 	}
 
-	return nil
+	return &cfg, nil
 }

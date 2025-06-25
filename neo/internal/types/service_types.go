@@ -1,27 +1,26 @@
-package common
+package types
 
 import (
-	"neo/internal/types"
 	"time"
 )
 
 // ServiceHandler 服务处理器接口定义
 type ServiceHandler interface {
-	Handle(request *types.Request) (*types.Response, error)
+	Handle(request *Request) (*Response, error)
 }
 
 // ServiceHandlerFunc 函数类型实现ServiceHandler接口
-type ServiceHandlerFunc func(request *types.Request) (*types.Response, error)
+type ServiceHandlerFunc func(request *Request) (*Response, error)
 
 // Handle 实现ServiceHandler接口
-func (f ServiceHandlerFunc) Handle(request *types.Request) (*types.Response, error) {
+func (f ServiceHandlerFunc) Handle(request *Request) (*Response, error) {
 	return f(request)
 }
 
 // ServiceRegistry 服务注册接口
 type ServiceRegistry interface {
 	Register(service string, handler ServiceHandler)
-	RegisterFunc(service string, handler func(*types.Request) (*types.Response, error))
+	RegisterFunc(service string, handler func(*Request) (*Response, error))
 	GetHandler(service string) (ServiceHandler, bool)
 }
 

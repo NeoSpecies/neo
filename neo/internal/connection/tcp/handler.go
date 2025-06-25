@@ -8,16 +8,17 @@ import (
 
 	"neo/internal/connection"
 	"neo/internal/ipcprotocol"
+	"neo/internal/types" // 替换原 connection 包导入
 )
 
 // ConnectionHandler 处理TCP连接的生命周期和消息流转
 type ConnectionHandler struct {
-	config         *connection.Config
-	connectionPool *connection.TCPConnectionPool
+	config         *types.Config            // 修正为 types.Config
+	connectionPool *types.TCPConnectionPool // 修正为 types.TCPConnectionPool
 }
 
 // NewConnectionHandler 创建新的连接处理器
-func NewConnectionHandler(config *connection.Config, pool *connection.TCPConnectionPool) *ConnectionHandler {
+func NewConnectionHandler(config *types.Config, pool *types.TCPConnectionPool) *ConnectionHandler { // 更新参数类型
 	return &ConnectionHandler{
 		config:         config,
 		connectionPool: pool,
@@ -73,25 +74,26 @@ func (h *ConnectionHandler) HandleConnection(conn net.Conn) error {
 
 	// 创建带统计功能的连接 - 使用连接池的Connection类型
 	// 从连接池获取一个连接包装器
-	poolConn, err := h.connectionPool.CreateConnection()
+	poolConn, err := connection.Acquire(h.connectionPool) // 修改为使用connection.Acquire
 	if err != nil {
 		return fmt.Errorf("创建连接池连接失败: %v", err)
 	}
 	// 将原始连接替换为配置好的TCP连接
 	poolConn.Conn = tcpConn
-	poolConn.Stats = connection.NewConnectionStats()
+	poolConn.Stats = types.NewConnectionStats() // 修改为使用types包的构造函数
 
-	// 添加到连接池 - 使用正确的Release方法
-	h.connectionPool.Release(poolConn)
+	// 添加到连接池 - 使用正确的Release方法和参数
+	connection.Release(h.connectionPool, poolConn, nil) // 添加第三个error参数
 	defer func() {
 		// 从连接池移除并关闭连接
 		conn.Close()
 	}()
 
 	// 消息处理循环
+	codec := ipcprotocol.NewCodec(conn, conn)
 	for {
 		// 读取消息
-		msgFrame, err := readMessageFrame(conn)
+		msgFrame, err := codec.ReadFrame()
 		if err != nil {
 			// 检查是否为超时错误
 			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
@@ -103,8 +105,8 @@ func (h *ConnectionHandler) HandleConnection(conn net.Conn) error {
 
 		// 成功读取后重置读超时
 		if h.config.IdleTimeout > 0 {
-			if err := conn.SetReadDeadline(time.Now().Add(h.config.IdleTimeout)); err != nil {
-				return fmt.Errorf("重置读超时失败: %v", err)
+			if readErr := conn.SetReadDeadline(time.Now().Add(h.config.IdleTimeout)); readErr != nil {
+				return fmt.Errorf("重置读超时失败: %v", readErr)
 			}
 		}
 
@@ -116,7 +118,7 @@ func (h *ConnectionHandler) HandleConnection(conn net.Conn) error {
 
 		// 发送响应（如果有）
 		if responseFrame != nil {
-			if err := writeMessageFrame(conn, responseFrame); err != nil {
+			if err := codec.WriteFrame(responseFrame); err != nil {
 				return h.handleConnectionError(err)
 			}
 		}
@@ -140,28 +142,4 @@ func (h *ConnectionHandler) handleConnectionError(err error) error {
 
 	// 返回错误
 	return fmt.Errorf("连接错误: %v", err)
-}
-
-// 读取消息帧
-func readMessageFrame(conn net.Conn) (*ipcprotocol.MessageFrame, error) {
-	// 实际实现应根据协议规范解析消息
-	// 此处为简化实现
-	buf := make([]byte, 4096)
-	n, err := conn.Read(buf)
-	if err != nil {
-		return nil, err
-	}
-
-	return &ipcprotocol.MessageFrame{
-		Type:    ipcprotocol.MessageTypeRequest,
-		Payload: buf[:n],
-	}, nil
-}
-
-// 写入消息帧
-func writeMessageFrame(conn net.Conn, frame *ipcprotocol.MessageFrame) error {
-	// 实际实现应根据协议规范序列化和写入消息
-	// 此处为简化实现
-	_, err := conn.Write(frame.Payload)
-	return err
 }

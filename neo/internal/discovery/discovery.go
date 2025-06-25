@@ -4,6 +4,7 @@ import (
 	"context"
 	"sync"
 	"time"
+	"neo/internal/types"
 )
 
 // Service 服务元数据
@@ -50,44 +51,42 @@ type Event struct {
 
 // Discovery 服务发现核心组件
 type Discovery struct {
-	storage  Storage
-	events   chan Event // 修正：字段名去掉前导点，使用合法标识符
-	watchers map[string][]chan Event
+	storage  types.Storage
+	events   chan types.Event 
+	watchers map[string][]chan types.Event
 	mu       sync.RWMutex
 	ctx      context.Context
 	cancel   context.CancelFunc
 }
 
 // New 创建服务发现实例
-func New(storage Storage) *Discovery {
+func New(storage types.Storage) *Discovery {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Discovery{
 		storage:  storage,
-		events:   make(chan Event, 100),
-		watchers: make(map[string][]chan Event),
+		events:   make(chan types.Event, 100),
+		watchers: make(map[string][]chan types.Event),
 		ctx:      ctx,
 		cancel:   cancel,
 	}
 }
 
-// Register 注册服务（通过IPC调用）
-// Register 注册服务（通过IPC调用）
-func (d *Discovery) Register(ctx context.Context, s *Service) error {
+// Register 注册服务
+func (d *Discovery) Register(ctx context.Context, s *types.Service) error {
 	s.UpdatedAt = time.Now()
-	s.ExpireAt = s.UpdatedAt.Add(30 * time.Second) // 默认30秒租约
+	s.ExpireAt = s.UpdatedAt.Add(30 * time.Second)
 	if err := d.storage.Register(ctx, s); err != nil {
 		return err
 	}
-	// 发送注册事件（使用新定义的Event类型和EventRegistered常量）
-	d.events <- Event{Type: EventRegistered, Service: s}
+	d.events <- types.Event{Type: types.EventRegistered, Service: s}
 	return nil
 }
 
 // Watch 监听指定服务的变更事件
-func (d *Discovery) Watch(serviceName string) <-chan Event {
+func (d *Discovery) Watch(serviceName string) <-chan types.Event {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	ch := make(chan Event, 10) // 通道类型为Event
+	ch := make(chan types.Event, 10)
 	d.watchers[serviceName] = append(d.watchers[serviceName], ch)
 	go func() {
 		for {
@@ -97,7 +96,6 @@ func (d *Discovery) Watch(serviceName string) <-chan Event {
 					select {
 					case ch <- event:
 					default:
-						// 通道满时丢弃旧事件
 					}
 				}
 			case <-d.ctx.Done():
@@ -109,15 +107,7 @@ func (d *Discovery) Watch(serviceName string) <-chan Event {
 	return ch
 }
 
-// Close 关闭服务发现
-func (d *Discovery) Close() {
-	d.cancel()
-	d.storage.(*InMemoryStorage).Close() // 假设使用内存存储
-}
-
 // GetServices 根据服务名称获取所有注册的服务实例
-// 参数：serviceName - 目标服务名称
-// 返回：服务实例列表，错误信息
-func (d *Discovery) GetServices(serviceName string) ([]*Service, error) {
-	return d.storage.List(d.ctx, serviceName) // 使用Discovery持有的上下文和Storage.List方法
+func (d *Discovery) GetServices(serviceName string) ([]*types.Service, error) {
+	return d.storage.List(d.ctx, serviceName)
 }
