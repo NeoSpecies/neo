@@ -15,10 +15,11 @@ import (
 
 // 错误类型定义
 const (
-	ErrorTypeReadFailed  = "read_failed"
-	ErrorTypeWriteFailed = "write_failed"
-	ErrorTypeInvalidData = "invalid_data"
-	ErrorTypeConnection  = "connection_error"
+	ErrorTypeReadFailed       = "read_failed"
+	ErrorTypeWriteFailed      = "write_failed"
+	ErrorTypeInvalidData      = "invalid_data"
+	ErrorTypeConnection       = "connection_error"
+	ErrorTypeConnectionClosed = "connection_closed" // 新增连接关闭错误类型
 )
 
 // ConnectionError 连接错误结构体
@@ -36,12 +37,6 @@ func (e *ConnectionError) Error() string {
 	return fmt.Sprintf("%s: %s", e.Type, e.Message)
 }
 
-// 帧格式常量
-const (
-	FrameHeaderSize = 4       // 帧头部大小（字节）
-	MaxFrameSize    = 1 << 20 // 最大帧大小（1MB）
-)
-
 // TCP编解码器
 type Codec struct {
 	reader *bufio.Reader
@@ -57,108 +52,10 @@ func NewCodec(reader io.Reader, writer io.Writer) *Codec {
 	}
 }
 
-// 读取消息帧
-func (c *Codec) ReadFrame() ([]byte, error) {
-	// 读取头部（4字节，大端序表示长度）
-	var header [FrameHeaderSize]byte
-	if _, err := io.ReadFull(c.reader, header[:]); err != nil {
-		return nil, &ConnectionError{
-			Type:    ErrorTypeReadFailed,
-			Message: "读取帧头部失败",
-			Err:     err,
-		}
-	}
-
-	// 解析长度
-	frameSize := binary.BigEndian.Uint32(header[:])
-
-	// 验证长度
-	if frameSize == 0 {
-		return nil, &ConnectionError{
-			Type:    ErrorTypeInvalidData,
-			Message: "帧大小不能为0",
-		}
-	}
-
-	if frameSize > MaxFrameSize {
-		return nil, &ConnectionError{
-			Type:    ErrorTypeInvalidData,
-			Message: fmt.Sprintf("帧大小超出限制: %d > %d", frameSize, MaxFrameSize),
-		}
-	}
-
-	// 读取帧数据
-	frameData := make([]byte, frameSize)
-	if _, err := io.ReadFull(c.reader, frameData); err != nil {
-		return nil, &ConnectionError{
-			Type:    ErrorTypeReadFailed,
-			Message: "读取帧数据失败",
-			Err:     err,
-		}
-	}
-
-	return frameData, nil
-}
-
-// 写入消息帧
-func (c *Codec) WriteFrame(data []byte) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	// 检查数据大小
-	if len(data) == 0 {
-		return &ConnectionError{
-			Type:    ErrorTypeInvalidData,
-			Message: "数据不能为空",
-		}
-	}
-
-	if len(data) > MaxFrameSize {
-		return &ConnectionError{
-			Type:    ErrorTypeInvalidData,
-			Message: fmt.Sprintf("数据大小超出限制: %d > %d", len(data), MaxFrameSize),
-		}
-	}
-
-	// 写入头部（4字节，大端序表示长度）
-	header := make([]byte, FrameHeaderSize)
-	binary.BigEndian.PutUint32(header, uint32(len(data)))
-
-	if _, err := c.writer.Write(header); err != nil {
-		return &ConnectionError{
-			Type:    ErrorTypeWriteFailed,
-			Message: "写入帧头部失败",
-			Err:     err,
-		}
-	}
-
-	// 写入数据
-	if _, err := c.writer.Write(data); err != nil {
-		return &ConnectionError{
-			Type:    ErrorTypeWriteFailed,
-			Message: "写入帧数据失败",
-			Err:     err,
-		}
-	}
-
-	// 刷新缓冲区
-	return c.writer.Flush()
-}
-
 // 读取IPC消息
 func (c *Codec) ReadIPCMessage() (*ipcprotocol.MessageFrame, error) {
-	// 移除原有的ReadFrame调用，直接读取数据
-	frameData, err := io.ReadAll(c.reader)
-	if err != nil {
-		return nil, &ConnectionError{
-			Type:    ErrorTypeReadFailed,
-			Message: "读取数据失败",
-			Err:     err,
-		}
-	}
-
-	// 保留原有的协议头解析逻辑
-	reader := bytes.NewReader(frameData)
+	// 移除帧长度前缀依赖，直接读取协议内容
+	reader := bufio.NewReader(c.reader)
 	var magic uint16
 	var version uint8
 	var msgIDLen, methodLen uint16
@@ -167,6 +64,9 @@ func (c *Codec) ReadIPCMessage() (*ipcprotocol.MessageFrame, error) {
 
 	// 1. 读取魔数(2字节)
 	if err := binary.Read(reader, binary.BigEndian, &magic); err != nil {
+		if err == io.EOF {
+			return nil, &ConnectionError{Type: ErrorTypeConnectionClosed, Message: "客户端断开连接", Err: err}
+		}
 		return nil, &ConnectionError{Type: ErrorTypeInvalidData, Message: "读取魔数失败", Err: err}
 	}
 	fmt.Printf("[协议头] 魔数: 0x%04X\n", magic)
@@ -201,11 +101,14 @@ func (c *Codec) ReadIPCMessage() (*ipcprotocol.MessageFrame, error) {
 	if err := binary.Read(reader, binary.BigEndian, &paramLen); err != nil {
 		return nil, &ConnectionError{Type: ErrorTypeInvalidData, Message: "读取参数长度失败", Err: err}
 	}
+	// 添加参数长度限制，防止内存溢出
+	if paramLen > MaxFrameSize {
+		return nil, &ConnectionError{Type: ErrorTypeInvalidData, Message: fmt.Sprintf("参数大小超出限制: %d > %d", paramLen, MaxFrameSize)}
+	}
 	params := make([]byte, paramLen)
 	if _, err := io.ReadFull(reader, params); err != nil {
 		return nil, &ConnectionError{Type: ErrorTypeInvalidData, Message: "读取参数内容失败", Err: err}
 	}
-	// 添加参数字节调试日志
 	fmt.Printf("[DEBUG] 接收到的参数原始字节: % x\n", params)
 	fmt.Printf("[协议头] 参数长度: %d字节\n", paramLen)
 	fmt.Printf("[参数内容] %s\n", string(params))
@@ -216,19 +119,20 @@ func (c *Codec) ReadIPCMessage() (*ipcprotocol.MessageFrame, error) {
 	}
 	fmt.Printf("[协议头] 校验和: 0x%08X\n", checksum)
 
-	// 修复：重新构建完整协议头数据用于校验和计算
-	// 1. 回到数据起始位置
-	reader.Seek(0, io.SeekStart)
+	// 重新构建完整协议头数据用于校验和计算
+	// 1. 创建缓冲区并写回已读取的协议头字段
+	headerBuffer := new(bytes.Buffer)
+	binary.Write(headerBuffer, binary.BigEndian, magic)
+	binary.Write(headerBuffer, binary.BigEndian, version)
+	binary.Write(headerBuffer, binary.BigEndian, msgIDLen)
+	headerBuffer.Write(msgID)
+	binary.Write(headerBuffer, binary.BigEndian, methodLen)
+	headerBuffer.Write(method)
+	binary.Write(headerBuffer, binary.BigEndian, paramLen)
+	headerBuffer.Write(params)
 
-	// 2. 读取完整协议头（魔数+版本+消息ID+方法名+参数）
-	headerSize := 2 + 1 + 2 + int(msgIDLen) + 2 + int(methodLen) + 4 + int(paramLen)
-	fullHeader := make([]byte, headerSize)
-	if _, err := io.ReadFull(reader, fullHeader); err != nil {
-		return nil, &ConnectionError{Type: ErrorTypeInvalidData, Message: "读取完整协议头失败", Err: err}
-	}
-
-	// 3. 对完整协议头计算校验和
-	computedChecksum := crc32.ChecksumIEEE(fullHeader)
+	// 2. 对完整协议头计算校验和
+	computedChecksum := crc32.ChecksumIEEE(headerBuffer.Bytes())
 	fmt.Printf("[DEBUG] 计算校验和: 0x%08X, 接收校验和: 0x%08X\n", computedChecksum, checksum)
 
 	if computedChecksum != checksum {
@@ -248,7 +152,7 @@ func (c *Codec) ReadIPCMessage() (*ipcprotocol.MessageFrame, error) {
 	// 解析参数为JSON
 	var messageFrame ipcprotocol.MessageFrame
 	if err := json.Unmarshal(params, &messageFrame); err != nil {
-		return nil, &ConnectionError{Type: ErrorTypeInvalidData, Message: "解析参数JSON失败", Err: err}
+		return nil, &ConnectionError{Type: ErrorTypeInvalidData, Message: fmt.Sprintf("参数JSON解析失败: %v", err)}
 	}
 
 	return &messageFrame, nil
@@ -257,8 +161,9 @@ func (c *Codec) ReadIPCMessage() (*ipcprotocol.MessageFrame, error) {
 // 写入IPC消息
 // 添加协议常量定义（确保使用固定大小类型）
 const (
-	MAGIC_NUMBER uint16 = 0xAEBD // 2字节大端魔数
-	VERSION      uint8  = 0x01   // 1字节协议版本
+	MAGIC_NUMBER uint16 = 0xAEBD  // 2字节大端魔数
+	VERSION      uint8  = 0x01    // 1字节协议版本
+	MaxFrameSize uint32 = 1 << 20 // 1MB 最大帧大小限制
 )
 
 // WriteIPCMessage 按协议格式写入消息
@@ -291,5 +196,14 @@ func (c *Codec) WriteIPCMessage(frame *ipcprotocol.MessageFrame) error {
 	}
 
 	// 写入完整帧
-	return c.WriteFrame(buffer.Bytes())
+	// return c.WriteFrame(buffer.Bytes())
+
+	// 直接写入缓冲区内容并刷新
+	if _, err := c.writer.Write(buffer.Bytes()); err != nil {
+		return &ConnectionError{Type: ErrorTypeWriteFailed, Message: "写入帧数据失败", Err: err}
+	}
+	if err := c.writer.Flush(); err != nil {
+		return &ConnectionError{Type: ErrorTypeWriteFailed, Message: "刷新缓冲区失败", Err: err}
+	}
+	return nil
 }

@@ -306,14 +306,22 @@ func (h *TCPHandler) Start() {
 		h.Conn.SetReadDeadline(time.Now().Add(h.readTimeout))
 
 		// 使用codec读取并解析IPC消息
-		messageFrame, err := codec.ReadIPCMessage()
+		msg, err := codec.ReadIPCMessage()
 		if err != nil {
-			fmt.Printf("[ERROR] 消息解析失败: %v\n", err)
+			if connErr, ok := err.(*ConnectionError); ok {
+				if connErr.Type == ErrorTypeConnectionClosed {
+					fmt.Printf("[INFO] 客户端断开连接")
+				} else {
+					fmt.Printf("[ERROR] 消息处理失败: %v", err)
+				}
+			} else {
+				fmt.Printf("[ERROR] 未知错误: %v", err)
+			}
 			return
 		}
 
 		// 将解析后的消息帧转换为JSON字节
-		requestData, err := json.Marshal(messageFrame)
+		requestData, err := json.Marshal(msg)
 		if err != nil {
 			fmt.Printf("[ERROR] 消息序列化失败: %v\n", err)
 			return
@@ -337,9 +345,28 @@ func (h *TCPHandler) Start() {
 		h.Conn.SetWriteDeadline(time.Now().Add(h.writeTimeout))
 
 		// 发送响应
+		// 修改响应生成代码
+		// 原代码
+		// responseFrame := &ipcprotocol.MessageFrame{
+		//     Type: ipcprotocol.MessageTypeResponse,
+		//     Result: map[string]string{
+		//         "id": registeredServiceID,
+		//     },
+		// }
+		
+		// 修改为
+		registeredServiceID := "some-service-id-123"
+		resultData := map[string]string{
+		    "id": registeredServiceID,
+		}
+		payloadBytes, err := json.Marshal(resultData)
+		if err != nil {
+		    fmt.Printf("[ERROR] 序列化响应数据失败: %v\n", err)
+		    return
+		}
 		responseFrame := &ipcprotocol.MessageFrame{
-			Type:    ipcprotocol.MessageTypeResponse,
-			Payload: response,
+		    Type:    ipcprotocol.MessageTypeResponse,
+		    Payload: payloadBytes,
 		}
 
 		// 添加详细错误处理
@@ -353,4 +380,17 @@ func (h *TCPHandler) Start() {
 		}
 		fmt.Printf("[DEBUG] 响应已发送，长度: %d字节\n", len(response))
 	}
+}
+
+// 修改响应结构体定义
+// 原代码
+// type Response struct {
+//     Type    string          `json:"type"`
+//     Payload json.RawMessage `json:"payload"`
+// }
+
+// 修改为
+type Response struct {
+    Type   string      `json:"type"`
+    Result interface{} `json:"result"`
 }
