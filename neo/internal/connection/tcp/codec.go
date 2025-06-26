@@ -149,13 +149,36 @@ func (c *Codec) ReadIPCMessage() (*ipcprotocol.MessageFrame, error) {
 		return nil, &ConnectionError{Type: ErrorTypeInvalidData, Message: fmt.Sprintf("版本不匹配，期望1，实际%d", version)}
 	}
 
-	// 解析参数为JSON
-	var messageFrame ipcprotocol.MessageFrame
-	if err := json.Unmarshal(params, &messageFrame); err != nil {
-		return nil, &ConnectionError{Type: ErrorTypeInvalidData, Message: fmt.Sprintf("参数JSON解析失败: %v", err)}
+	// 解析参数为JSON对象而非MessageFrame结构体
+	var messageData map[string]interface{}
+	if err := json.Unmarshal(params, &messageData); err != nil {
+		return nil, &ConnectionError{Type: ErrorTypeInvalidData, Message: fmt.Sprintf("JSON解析失败: %v, 原始数据: %s", err, string(params))}
 	}
 
-	return &messageFrame, nil
+	// 添加详细调试信息
+	fmt.Printf("[DEBUG] 解析后的JSON参数: %+v\n", messageData)
+
+	// 验证关键字段是否存在
+	action, actionOk := messageData["action"].(string)
+	serviceData, serviceOk := messageData["service"].(map[string]interface{})
+	if !actionOk || !serviceOk {
+		return nil, &ConnectionError{Type: ErrorTypeInvalidData, Message: "JSON缺少必要字段: action或service"}
+	}
+
+	// 提取服务注册核心信息
+	serviceID := serviceData["id"].(string)
+	serviceName := serviceData["name"].(string)
+	address := serviceData["address"].(string)
+	port := int(serviceData["port"].(float64))
+
+	// 创建正确的MessageFrame结构
+	messageFrame := &ipcprotocol.MessageFrame{
+		Type:    action,
+		Payload: []byte(fmt.Sprintf(`{"service_id":"%s","name":"%s","address":"%s","port":%d}`, serviceID, serviceName, address, port)),
+	}
+
+	fmt.Printf("[DEBUG] 构造的消息帧: Type=%s, Payload=%s\n", messageFrame.Type, string(messageFrame.Payload))
+	return messageFrame, nil
 }
 
 // 写入IPC消息

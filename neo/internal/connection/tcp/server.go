@@ -298,7 +298,6 @@ func NewTCPHandler(
 
 // Start 开始处理连接
 func (h *TCPHandler) Start() {
-	// 创建编解码器实例
 	codec := NewCodec(h.Conn, h.Conn)
 
 	for {
@@ -312,10 +311,10 @@ func (h *TCPHandler) Start() {
 				if connErr.Type == ErrorTypeConnectionClosed {
 					fmt.Printf("[INFO] 客户端断开连接")
 				} else {
-					fmt.Printf("[ERROR] 消息处理失败: %v", err)
+					fmt.Printf("[ERROR] 消息处理失败: %v\n", err)
 				}
 			} else {
-				fmt.Printf("[ERROR] 未知错误: %v", err)
+				fmt.Printf("[ERROR] 未知错误: %v\n", err)
 			}
 			return
 		}
@@ -334,8 +333,8 @@ func (h *TCPHandler) Start() {
 			// 返回结构化错误响应
 			errorResp := map[string]interface{}{
 				"error": map[string]string{
-					"code":    "INVALID_CHECKSUM",
-					"message": "校验和不匹配，请检查协议实现",
+					"code":    "PROCESSING_ERROR",
+					"message": err.Error(),
 				},
 			}
 			response, _ = json.Marshal(errorResp)
@@ -344,41 +343,64 @@ func (h *TCPHandler) Start() {
 		// 设置写入超时
 		h.Conn.SetWriteDeadline(time.Now().Add(h.writeTimeout))
 
-		// 发送响应
-		// 修改响应生成代码
-		// 原代码
-		// responseFrame := &ipcprotocol.MessageFrame{
-		//     Type: ipcprotocol.MessageTypeResponse,
-		//     Result: map[string]string{
-		//         "id": registeredServiceID,
-		//     },
-		// }
-		
-		// 修改为
-		registeredServiceID := "some-service-id-123"
-		resultData := map[string]string{
-		    "id": registeredServiceID,
-		}
-		payloadBytes, err := json.Marshal(resultData)
-		if err != nil {
-		    fmt.Printf("[ERROR] 序列化响应数据失败: %v\n", err)
-		    return
-		}
-		responseFrame := &ipcprotocol.MessageFrame{
-		    Type:    ipcprotocol.MessageTypeResponse,
-		    Payload: payloadBytes,
+		// 解析请求消息Payload
+		var payloadMap map[string]interface{}
+		if unmarshalErr := json.Unmarshal(msg.Payload, &payloadMap); unmarshalErr != nil {
+			fmt.Printf("[ERROR] 解析Payload失败: %v\n", unmarshalErr)
+			// ... 保留其余错误处理逻辑 ...
 		}
 
-		// 添加详细错误处理
-		if err := codec.WriteIPCMessage(responseFrame); err != nil {
-			fmt.Printf("[ERROR] 发送响应失败: %v\n", err)
-			// 尝试直接写入原始响应（应急方案）
-			if _, writeErr := h.Conn.Write(response); writeErr != nil {
-				fmt.Printf("[ERROR] 直接写入响应失败: %v\n", writeErr)
-			}
+		// 提取服务信息并添加错误处理
+		serviceID, ok := payloadMap["service_id"].(string)
+		if !ok {
+			fmt.Printf("[ERROR] 无效的service_id格式\n")
 			return
 		}
-		fmt.Printf("[DEBUG] 响应已发送，长度: %d字节\n", len(response))
+
+		name, ok := payloadMap["name"].(string)
+		if !ok {
+			fmt.Printf("[ERROR] 无效的name格式\n")
+			return
+		}
+
+		address, ok := payloadMap["address"].(string)
+		if !ok {
+			fmt.Printf("[ERROR] 无效的address格式\n")
+			return
+		}
+
+		portVal, ok := payloadMap["port"].(float64)
+		if !ok {
+			fmt.Printf("[ERROR] 无效的port格式\n")
+			return
+		}
+		port := int(portVal)
+
+		// 构建响应数据
+		responseData := map[string]interface{}{
+			"result": map[string]interface{}{
+				"id":      serviceID,
+				"name":    name,
+				"address": address,
+				"port":    port,
+			},
+		}
+
+		response, err = json.Marshal(responseData)
+		if err != nil {
+			fmt.Printf("[ERROR] 响应序列化失败: %v\n", err)
+			return
+		}
+
+		// 构建并发送响应帧
+		responseFrame := &ipcprotocol.MessageFrame{
+			Type:    ipcprotocol.MessageTypeResponse,
+			Payload: response,
+		}
+		if err := codec.WriteIPCMessage(responseFrame); err != nil {
+			fmt.Printf("[ERROR] 发送响应失败: %v\n", err)
+			return
+		}
 	}
 }
 
@@ -391,6 +413,6 @@ func (h *TCPHandler) Start() {
 
 // 修改为
 type Response struct {
-    Type   string      `json:"type"`
-    Result interface{} `json:"result"`
+	Type   string      `json:"type"`
+	Result interface{} `json:"result"`
 }
