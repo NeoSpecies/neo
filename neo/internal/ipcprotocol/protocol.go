@@ -2,7 +2,6 @@ package ipcprotocol
 
 import (
 	"encoding/json"
-	"neo/internal/common"
 	"neo/internal/types"
 	"time"
 )
@@ -67,7 +66,7 @@ func NewErrorResponse(requestID string, code types.ErrorCode, message string) *t
 }
 
 // ProcessMessage 处理IPC消息
-func ProcessMessage(data []byte, registry common.ServiceRegistry, workerPool common.WorkerPool) ([]byte, error) {
+func ProcessMessage(data []byte, registry types.ServiceRegistry, workerPool types.WorkerPool) ([]byte, error) {
 	// 解析消息帧
 	var frame MessageFrame
 	if err := json.Unmarshal(data, &frame); err != nil {

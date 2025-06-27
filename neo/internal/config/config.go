@@ -1,19 +1,12 @@
 package config
 
 import (
-	"time"
 	"neo/internal/types"
+	"time"
 )
 
-// GlobalConfig 全局配置结构体
-type GlobalConfig struct {
-	IPC      types.IPCConfig      `yaml:"ipc"`
-	Protocol types.ProtocolConfig `yaml:"protocol"`
-	Metrics  types.MetricsConfig  `yaml:"metrics"`
-}
-
-// 默认配置实例
-var defaultConfig = &GlobalConfig{
+// 修改默认配置引用
+var defaultConfig = &types.GlobalConfig{
 	IPC: types.IPCConfig{
 		Host:              "127.0.0.1",
 		Port:              9090,
@@ -35,7 +28,8 @@ var defaultConfig = &GlobalConfig{
 }
 
 // GetGlobalConfig 获取全局配置
-func GetGlobalConfig() *GlobalConfig {
+// 修改函数返回类型
+func GetGlobalConfig() *types.GlobalConfig {
 	// 实际项目中应从配置文件加载，此处返回默认配置
 	return defaultConfig
 }

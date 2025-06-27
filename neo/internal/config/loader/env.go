@@ -1,13 +1,13 @@
 package loader
 
 import (
+	"neo/internal/types"
 	"os"
-	"neo/internal/config"
 )
 
 const envPrefix = "NEO_IPC_"
 
-func LoadFromEnv(cfg *config.GlobalConfig) error {
+func LoadFromEnv(cfg *types.GlobalConfig) error {
 	// 协议配置
 	cfg.Protocol.CompressionType = getEnv(
 		envPrefix+"COMPRESSION_TYPE", "gzip")

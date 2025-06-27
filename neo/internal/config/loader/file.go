@@ -1,9 +1,10 @@
 package loader
 
 import (
-	"io/ioutil"
+	"neo/internal/types"
+	"os"
+
 	"gopkg.in/yaml.v3"
-	"neo/internal/config"
 )
 
 // FileLoader 从文件加载配置
@@ -16,16 +17,15 @@ func NewFileLoader(path string) *FileLoader {
 	return &FileLoader{path: path}
 }
 
-// Load 加载并解析配置文件
-func (l *FileLoader) Load() (*config.GlobalConfig, error) {
+func (l *FileLoader) Load() (*types.GlobalConfig, error) {
 	// 读取文件内容
-	data, err := ioutil.ReadFile(l.path)
+	data, err := os.ReadFile(l.path)
 	if err != nil {
 		return nil, err
 	}
 
 	// 解析YAML
-	var cfg config.GlobalConfig
+	var cfg types.GlobalConfig
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, err
 	}

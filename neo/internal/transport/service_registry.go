@@ -1,7 +1,6 @@
 package transport
 
 import (
-	"neo/internal/common"
 	"neo/internal/types"
 	"sync"
 )
@@ -9,18 +8,18 @@ import (
 // ServiceRegistry 服务注册表，实现common.ServiceRegistry接口
 type ServiceRegistry struct {
 	mu       sync.RWMutex
-	handlers map[string]common.ServiceHandler
+	handlers map[string]types.ServiceHandler
 }
 
 // NewServiceRegistry 创建新的服务注册表
 func NewServiceRegistry() *ServiceRegistry {
 	return &ServiceRegistry{
-		handlers: make(map[string]common.ServiceHandler),
+		handlers: make(map[string]types.ServiceHandler),
 	}
 }
 
 // Register 注册服务处理器
-func (r *ServiceRegistry) Register(service string, handler common.ServiceHandler) {
+func (r *ServiceRegistry) Register(service string, handler types.ServiceHandler) {
 	if service == "" {
 		panic("服务名称不能为空")
 	}
@@ -53,7 +52,7 @@ func (r *ServiceRegistry) RegisterFunc(service string, handler func(*types.Reque
 }
 
 // GetHandler 获取服务处理器，实现common.ServiceRegistry接口
-func (r *ServiceRegistry) GetHandler(service string) (common.ServiceHandler, bool) {
+func (r *ServiceRegistry) GetHandler(service string) (types.ServiceHandler, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	handler, exists := r.handlers[service]

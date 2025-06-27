@@ -9,7 +9,6 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
-	"neo/internal/common"
 	"neo/internal/connection/tcp"
 	"neo/internal/ipcprotocol"
 	"neo/internal/types"
@@ -70,7 +69,7 @@ func (a *workerPoolAdapter) Submit(taskFunc func()) error {
 	return a.workerPool.Submit(task)
 }
 
-// 实现common.WorkerPool接口的Stop方法
+// types.WorkerPool接口的Stop方法
 func (a *workerPoolAdapter) Stop() {
 	a.workerPool.Stop()
 }
@@ -78,7 +77,7 @@ func (a *workerPoolAdapter) Stop() {
 // IPC服务器
 type IPCServer struct {
 	config          IPCServerConfig
-	tcpServer       common.Server
+	tcpServer       types.Server
 	serviceRegistry *ServiceRegistry
 	workerPool      *WorkerPool
 	metrics         *types.Metrics
@@ -112,7 +111,7 @@ func NewIPCServer(config IPCServerConfig) (*IPCServer, error) {
 	}
 
 	// 创建TCP服务器
-	var tcpServer common.Server
+	var tcpServer types.Server
 	// 通过工厂方法创建TCP服务器
 	tcpServer, err := createTCPServer(
 		&config.TCPConfig,
@@ -138,7 +137,7 @@ func NewIPCServer(config IPCServerConfig) (*IPCServer, error) {
 }
 
 // 添加TCP服务器工厂方法
-func createTCPServer(config *types.TCPConfig, registry *ServiceRegistry, workerPool common.WorkerPool, metrics *types.Metrics) (common.Server, error) {
+func createTCPServer(config *types.TCPConfig, registry *ServiceRegistry, workerPool types.WorkerPool, metrics *types.Metrics) (types.Server, error) {
 	// 创建消息回调函数
 	callback := func(data []byte) ([]byte, error) {
 		// 实现消息处理逻辑
@@ -202,6 +201,6 @@ func (s *IPCServer) Stop() error {
 }
 
 // 注册服务处理器
-func (s *IPCServer) RegisterService(serviceName string, handler common.ServiceHandler) {
+func (s *IPCServer) RegisterService(serviceName string, handler types.ServiceHandler) {
 	s.serviceRegistry.Register(serviceName, handler)
 }
