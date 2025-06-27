@@ -187,6 +187,9 @@ func (s *TCPServer) acceptLoop() {
 				case <-s.ctx.Done():
 					return
 				default:
+					if ne, ok := err.(*net.OpError); ok && ne.Err.Error() == "use of closed network connection" {
+						return
+					}
 					fmt.Printf("[DEBUG] 接受连接失败: %v\n", err)
 					time.Sleep(1 * time.Second)
 				}
