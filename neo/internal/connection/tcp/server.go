@@ -50,7 +50,7 @@ func (c *ServerConfig) GetHandlerConfig() interface{} {
 // TCPServer 管理TCP连接和消息处理
 type TCPServer struct {
 	listener    net.Listener
-	config      *types.ServerConfig
+	config      *ServerConfig // 修改为具体的ServerConfig结构体指针
 	metrics     *types.Metrics
 	connections *types.TCPConnectionPool
 	callback    types.MessageCallback
@@ -105,8 +105,8 @@ func NewServer(
 		Registry: prometheus.NewRegistry(),
 	}
 
-	// 修改serverConfig的声明和初始化
-	serverConfig := &types.ServerConfig{
+	// 转换TCPConfig为ServerConfig
+	serverConfig := &ServerConfig{
 		MaxConnections:    config.MaxConnections,
 		MaxMsgSize:        config.MaxMsgSize,
 		ReadTimeout:       config.ReadTimeout,
@@ -187,9 +187,6 @@ func (s *TCPServer) acceptLoop() {
 				case <-s.ctx.Done():
 					return
 				default:
-					if ne, ok := err.(*net.OpError); ok && ne.Err.Error() == "use of closed network connection" {
-						return
-					}
 					fmt.Printf("[DEBUG] 接受连接失败: %v\n", err)
 					time.Sleep(1 * time.Second)
 				}
@@ -416,6 +413,5 @@ func (h *TCPHandler) Start() {
 
 // 修改为
 type Response struct {
-	Type   string      `json:"type"`
-	Result interface{} `json:"result"`
+	Type string `json:"type"`
 }
