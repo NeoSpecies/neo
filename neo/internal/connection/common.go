@@ -7,12 +7,13 @@ import (
 	"time"
 
 	"neo/internal/metrics"
+	"neo/internal/types"
 )
 
 // 带统计功能的连接包装器
 type StatsConnection struct {
 	net.Conn
-	stats *ConnectionStats
+	stats *types.ConnectionStats
 	mu    sync.Mutex
 }
 
@@ -20,7 +21,7 @@ type StatsConnection struct {
 func NewStatsConnection(conn net.Conn) *StatsConnection {
 	return &StatsConnection{
 		Conn:  conn,
-		stats: NewConnectionStats(),
+		stats: types.NewConnectionStats(),
 	}
 }
 
@@ -51,10 +52,8 @@ func (c *StatsConnection) Write(b []byte) (int, error) {
 }
 
 // 获取连接统计信息
-func (c *StatsConnection) Stats() ConnectionStats {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return *c.stats
+func (s *StatsConnection) Stats() *types.ConnectionStats {
+	return s.stats
 }
 
 // 带超时控制的连接

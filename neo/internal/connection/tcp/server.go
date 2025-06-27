@@ -50,7 +50,7 @@ func (c *ServerConfig) GetHandlerConfig() interface{} {
 // TCPServer 管理TCP连接和消息处理
 type TCPServer struct {
 	listener    net.Listener
-	config      *ServerConfig
+	config      *types.ServerConfig
 	metrics     *types.Metrics
 	connections *types.TCPConnectionPool
 	callback    types.MessageCallback
@@ -105,8 +105,8 @@ func NewServer(
 		Registry: prometheus.NewRegistry(),
 	}
 
-	// 转换TCPConfig为ServerConfig
-	serverConfig := &ServerConfig{
+	// 修改serverConfig的声明和初始化
+	serverConfig := &types.ServerConfig{
 		MaxConnections:    config.MaxConnections,
 		MaxMsgSize:        config.MaxMsgSize,
 		ReadTimeout:       config.ReadTimeout,

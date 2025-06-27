@@ -2,7 +2,7 @@ package task
 
 import (
 	"fmt"
-	"neo/internal/connection"
+	"neo/internal/types"
 	"sync"
 	"time"
 
@@ -24,7 +24,7 @@ type AsyncTask struct {
 	Status     TaskStatus          // 当前任务状态
 	Result     interface{}         // 任务执行结果
 	Error      error               // 错误信息（非nil表示执行失败）
-	Callback   connection.Callback // 回调函数（复用connection模块定义）
+	Callback   types.Callback      // 回调函数（复用connection模块定义）
 	CreatedAt  time.Time           // 创建时间（用于超时计算）
 	ExpireTime time.Duration       // 超时时间（默认30秒）
 }
@@ -54,7 +54,7 @@ func GetManager() *TaskManager {
 }
 
 // 创建新任务（参数类型已正确）
-func (m *TaskManager) CreateTask(callback connection.Callback, expireTime time.Duration) *AsyncTask {
+func (m *TaskManager) CreateTask(callback types.Callback, expireTime time.Duration) *AsyncTask {
 	// 使用UUID生成唯一任务ID（符合neo现有ID生成规范）
 	taskID := uuid.New().String()
 	task := &AsyncTask{

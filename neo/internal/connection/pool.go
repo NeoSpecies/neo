@@ -3,11 +3,12 @@ package connection
 import (
 	"context"
 	"errors"
+	"neo/internal/config"
+	"neo/internal/types"
 	"net"
+	"strconv"
 	"sync"
 	"time"
-
-	"neo/internal/types"
 
 	"github.com/prometheus/client_golang/prometheus"
 )
@@ -356,4 +357,11 @@ func performHealthCheck(pool *types.TCPConnectionPool) {
 // autoScale 自动扩缩容
 func autoScale(pool *types.TCPConnectionPool) {
 	// 实现自动扩缩容逻辑
+}
+
+func InitPool() *types.TCPConnectionPool {
+	cfg := config.GetGlobalConfig() // 使用正确的配置获取函数
+	maxConns := cfg.IPC.MaxConnections
+	addr := cfg.IPC.Host + ":" + strconv.Itoa(cfg.IPC.Port)
+	return types.NewTCPConnectionPool(addr, maxConns)
 }

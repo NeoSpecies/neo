@@ -16,6 +16,24 @@ type TCPConfig struct {
 	WriteTimeout      time.Duration `yaml:"write_timeout"`
 	WorkerCount       int           `yaml:"worker_count"`
 	ConnectionTimeout time.Duration `yaml:"connection_timeout"`
+    Address           string        `yaml:"address"` // 添加Address字段
+}
+
+// 实现ServerConfig接口方法
+func (c *TCPConfig) GetAddress() string {
+    return c.Address
+}
+
+func (c *TCPConfig) GetMaxConnections() int {
+    return c.MaxConnections
+}
+
+func (c *TCPConfig) GetConnectionTimeout() time.Duration {
+    return c.ConnectionTimeout
+}
+
+func (c *TCPConfig) GetHandlerConfig() interface{} {
+    return c
 }
 
 // MessageCallback 消息处理回调函数类型
