@@ -22,3 +22,12 @@
 - 迁移类型: Task, TaskResult, Worker, WorkerPoolConfig, WorkerPool
 - 影响范围: transport/worker_pool.go
 - 状态: 待验证
+[2025-06-17 18:00:00] 已完成服务器相关类型迁移
+- 创建文件: /www/neo/neo/internal/types/server_types.go
+- 迁移类型: IPCServerConfig, WorkerPoolAdapter, IPCServer
+- 影响范围: transport/ipc_server.go
+- 状态: 成功[2025-06-18 10:00:00] 已完成负载均衡相关类型迁移
+- 修改文件: /www/neo/neo/internal/types/connection_types.go
+- 迁移类型: LoadBalanceStrategy, MetricsCollector, Balancer, RoundRobinBalancer
+- 影响范围: connection/balancer.go
+- 状态: 成功

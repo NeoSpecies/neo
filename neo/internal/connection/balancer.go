@@ -7,7 +7,6 @@ import (
 	"sync"
 	"time"
 
-	"neo/internal/metrics"
 	"neo/internal/types"
 )
 
@@ -23,6 +22,8 @@ const (
 type MetricsCollector interface {
 	CollectRequest(ctx context.Context, serviceName, method string) time.Time
 	CollectResponse(ctx context.Context, serviceName, method string, startTime time.Time, err error)
+	// 新增UpdateConnections方法声明
+	UpdateConnections(serviceName string, current, added, removed int)
 }
 
 // Balancer 负载均衡器接口
@@ -39,18 +40,6 @@ type Balancer interface {
 	Len() int
 	// Close 关闭负载均衡器
 	Close()
-}
-
-// NewBalancer 根据策略创建负载均衡器
-func NewBalancer(strategy LoadBalanceStrategy, serviceName, methodName string, collector MetricsCollector) Balancer {
-	switch strategy {
-	case RoundRobin:
-		return NewRoundRobinBalancer(serviceName, methodName, collector)
-	case Weighted:
-		return NewWeightedBalancer()
-	default:
-		return NewRoundRobinBalancer(serviceName, methodName, collector) // 默认轮询策略
-	}
 }
 
 // RoundRobinBalancer 轮询负载均衡器
@@ -132,7 +121,8 @@ func (r *RoundRobinBalancer) Add(conn interface{}) {
 
 	r.connections = append(r.connections, conn)
 	log.Printf("添加连接到负载均衡器，当前连接数: %d", len(r.connections))
-	metrics.UpdateConnections(r.serviceName, len(r.connections), 0, len(r.connections))
+	// 使用metricsCollector接口调用UpdateConnections
+	r.metricsCollector.UpdateConnections(r.serviceName, len(r.connections), 0, len(r.connections))
 }
 
 // Remove 从负载均衡器移除连接
@@ -149,7 +139,8 @@ func (r *RoundRobinBalancer) Remove(conn interface{}) {
 				r.index = 0
 			}
 
-			metrics.UpdateConnections(r.serviceName, len(r.connections), 0, len(r.connections))
+			// 使用metricsCollector接口调用UpdateConnections
+			r.metricsCollector.UpdateConnections(r.serviceName, len(r.connections), 0, len(r.connections))
 			return
 		}
 	}
@@ -172,9 +163,39 @@ func (r *RoundRobinBalancer) Close() {
 	log.Println("负载均衡器已关闭")
 }
 
+// NewBalancer 根据策略创建负载均衡器
+func NewBalancer(strategy types.LoadBalanceStrategy, serviceName, methodName string, collector types.MetricsCollector) types.Balancer {
+	switch strategy {
+	case types.LoadBalanceRoundRobin:
+		return types.NewRoundRobinBalancer(serviceName, methodName, collector)
+	case types.LoadBalanceWeighted:
+		// 使用本地的NewWeightedBalancer代替types包中的
+		return NewWeightedBalancer()
+	default:
+		return types.NewRoundRobinBalancer(serviceName, methodName, collector) // 默认轮询策略
+	}
+}
+
 // WeightedBalancer 加权负载均衡器
 type WeightedBalancer struct {
 	// 实现加权负载均衡逻辑
+	connections []*types.Connection
+	index       int
+	mu          sync.Mutex
+}
+
+func (w *WeightedBalancer) Select(connections []*types.Connection) (*types.Connection, error) {
+	if len(connections) == 0 {
+		return nil, errors.New("没有可用连接")
+	}
+
+	// 简单加权选择实现（实际实现应根据权重计算）
+	w.mu.Lock()
+	conn := connections[w.index]
+	w.index = (w.index + 1) % len(connections)
+	w.mu.Unlock()
+
+	return conn, nil
 }
 
 // NewWeightedBalancer 创建新的加权负载均衡器
@@ -198,7 +219,6 @@ func (w *WeightedBalancer) Add(conn interface{}) {
 	// 实现添加逻辑
 }
 
-// Remove 移除连接（加权策略）
 func (w *WeightedBalancer) Remove(conn interface{}) {
 	// 实现移除逻辑
 }
