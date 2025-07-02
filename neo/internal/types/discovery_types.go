@@ -43,7 +43,6 @@ type Storage interface {
 }
 
 // Discovery 服务发现核心组件
-// 修改字段为大写开头
 type Discovery struct {
 	Storage  Storage
 	Events   chan Event
@@ -63,4 +62,22 @@ func NewDiscovery(storage Storage) *Discovery {
 		Ctx:      ctx,
 		Cancel:   cancel,
 	}
+}
+
+// MessageType 服务发现消息类型
+type MessageType int
+
+const (
+	MessageRegister MessageType = iota
+	MessageDeregister
+	MessageDiscover
+	MessageHeartbeat
+)
+
+// Message 服务发现协议消息
+type Message struct {
+	Type     MessageType
+	Service  *Service
+	Response []*Service
+	Error    string
 }

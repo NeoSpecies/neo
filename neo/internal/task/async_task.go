@@ -20,13 +20,13 @@ const (
 
 // 异步任务结构体（字段名采用驼峰式，增加JSON标签支持序列化）
 type AsyncTask struct {
-	TaskID     string              // 任务唯一标识（UUID格式）
-	Status     TaskStatus          // 当前任务状态
-	Result     interface{}         // 任务执行结果
-	Error      error               // 错误信息（非nil表示执行失败）
-	Callback   types.Callback      // 回调函数（复用connection模块定义）
-	CreatedAt  time.Time           // 创建时间（用于超时计算）
-	ExpireTime time.Duration       // 超时时间（默认30秒）
+	TaskID     string         // 任务唯一标识（UUID格式）
+	Status     TaskStatus     // 当前任务状态
+	Result     interface{}    // 任务执行结果
+	Error      error          // 错误信息（非nil表示执行失败）
+	Callback   types.Callback // 回调函数（复用connection模块定义）
+	CreatedAt  time.Time      // 创建时间（用于超时计算）
+	ExpireTime time.Duration  // 超时时间（默认30秒）
 }
 
 // 任务存储管理器（使用sync.RWMutex保证并发安全）

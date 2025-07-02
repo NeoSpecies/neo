@@ -2,7 +2,6 @@ package ipcprotocol
 
 import (
 	"encoding/json"
-	"fmt"
 	"neo/internal/types"
 	"time"
 )
@@ -14,38 +13,6 @@ const (
 	MessageTypeError    = "error"
 	MessageTypeEvent    = "event"
 )
-
-// ipcTask 实现types.Task接口
-// 用于包装IPC请求任务并提交到工作池
-// 实现说明：2025.06.17新增，解决接口不匹配问题
-
-type ipcTask struct {
-	taskID   string
-	req      *types.Request
-	registry types.ServiceRegistry
-}
-
-// ID 返回任务ID，实现types.Task接口
-func (t *ipcTask) ID() string {
-	return t.taskID
-}
-
-// Execute 执行任务，实现types.Task接口
-func (t *ipcTask) Execute() (interface{}, error) {
-	// 从服务注册表查找服务
-	handler, exists := t.registry.GetHandler(t.req.Service)
-	if !exists {
-		return nil, fmt.Errorf("service not found: %s", t.req.Service)
-	}
-
-	// 调用服务方法
-	resp, err := handler.Handle(t.req)
-	if err != nil {
-		return nil, err
-	}
-
-	return resp, nil
-}
 
 // 创建新请求
 func NewRequest(service, method string, params interface{}) (*types.Request, error) {
@@ -112,10 +79,10 @@ func ProcessMessage(data []byte, registry types.ServiceRegistry, workerPool type
 		}
 
 		// 提交任务到工作池处理
-		task := &ipcTask{
-			taskID:   req.RequestID,
-			req:      &req,
-			registry: registry,
+		task := &types.IPCTask{
+			TaskID:   req.RequestID,
+			Req:      &req,
+			Registry: registry,
 		}
 
 		// 提交任务并获取结果通道

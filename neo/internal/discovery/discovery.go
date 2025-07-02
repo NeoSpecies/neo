@@ -54,9 +54,8 @@ type Discovery struct {
 	storage  types.Storage
 	events   chan types.Event
 	watchers map[string][]chan types.Event
-	// 删除未使用的mu字段
-	ctx    context.Context
-	cancel context.CancelFunc
+	ctx      context.Context
+	cancel   context.CancelFunc
 }
 
 // New 创建服务发现实例
@@ -64,24 +63,20 @@ func New(storage types.Storage) *Discovery {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Discovery{
 		storage:  storage,
-		events:   make(chan types.Event, 100),
-		watchers: make(map[string][]chan types.Event),
-		ctx:      ctx,
-		cancel:   cancel,
+	events:   make(chan types.Event, 100),
+	watchers: make(map[string][]chan types.Event),
+	ctx:      ctx,
+	cancel:   cancel,
 	}
 }
 
-// 移除原有Service、EventType、Event、Storage和Discovery定义
-
-// Register 注册服务（结构体方法）
-// 创建包装结构体
+// DiscoveryService 包装结构体用于实现接口
 type DiscoveryService struct {
 	*types.Discovery
 }
 
-// 重构Register方法
+// Register 注册服务
 func (d *DiscoveryService) Register(ctx context.Context, s *types.Service) error {
-	// 调试打印：注册请求详情
 	fmt.Printf("[DEBUG] 收到服务注册请求: ID=%s, Name=%s, Address=%s:%d\n", s.ID, s.Name, s.Address, s.Port)
 	fmt.Printf("[DEBUG] 注册元数据: %+v\n", s.Metadata)
 
@@ -92,13 +87,12 @@ func (d *DiscoveryService) Register(ctx context.Context, s *types.Service) error
 		return err
 	}
 
-	// 调试打印：注册成功
 	fmt.Printf("[DEBUG] 服务注册成功: ID=%s, 过期时间=%v\n", s.ID, s.ExpireAt)
 	d.Events <- types.Event{Type: types.EventRegistered, Service: s}
 	return nil
 }
 
-// 重构Watch方法
+// Watch 监听服务事件
 func (d *DiscoveryService) Watch(serviceName string) <-chan types.Event {
 	d.Mu.Lock()
 	defer d.Mu.Unlock()
@@ -128,7 +122,7 @@ func (d *DiscoveryService) Watch(serviceName string) <-chan types.Event {
 	return ch
 }
 
-// 重构GetServices方法
+// GetServices 获取服务列表
 func (d *DiscoveryService) GetServices(serviceName string) ([]*types.Service, error) {
 	return d.Storage.List(d.Ctx, serviceName)
 }

@@ -1,18 +1,5 @@
 package types
 
-import (
-	"context"
-	"sync"
-)
-
-// WorkerPool接口定义 - 移至server_types.go避免循环依赖
-type WorkerPool interface {
-	Submit(task Task) chan TaskResult
-	Stop()
-	SetWorkerCount(count int)
-	Shutdown()
-}
-
 // IPC服务器配置
 type IPCServerConfig struct {
 	TCPConfig       TCPConfig
@@ -60,18 +47,7 @@ func (a *WorkerPoolAdapter) Shutdown() {
 
 // IPC服务器
 type IPCServer struct {
-	config          IPCServerConfig
-	tcpServer       Server
-	serviceRegistry *ServiceRegistry
-	workerPool      WorkerPool // 修正：使用接口类型
-	metrics         *Metrics
-
-	ctx    context.Context
-	cancel context.CancelFunc
-	wg     sync.WaitGroup
-
-	mu      sync.Mutex
-	started bool
+	// 删除所有未使用的字段
 }
 
 // 从全局配置创建IPC服务器配置

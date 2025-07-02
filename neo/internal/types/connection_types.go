@@ -5,11 +5,12 @@ import (
 	"errors"
 	"log"
 	"net"
+	"net/http"
 	"strconv"
 	"sync"
 	"time"
+
 	"github.com/prometheus/client_golang/prometheus"
-	"net/http"
 )
 
 // 连接池错误定义
@@ -455,7 +456,7 @@ func NewTCPConnectionPool(addr string, maxConnections int) *TCPConnectionPool {
 
 // MetricsCollector 指标收集器接口
 // 扩展接口以包含连接更新方法
- type MetricsCollector interface {
+type MetricsCollector interface {
 	CollectRequest(ctx context.Context, serviceName, method string) time.Time
 	CollectResponse(ctx context.Context, serviceName, method string, startTime time.Time, err error)
 	UpdateConnections(serviceName string, active, idle, total int)
@@ -484,7 +485,8 @@ func NewRoundRobinBalancer(serviceName, methodName string, collector MetricsColl
 
 // Pick 轮询选择一个连接
 func (r *RoundRobinBalancer) Pick(availableConns []interface{}) (interface{}, error) {
-	if availableConns == nil || len(availableConns) == 0 {
+	// 修复S1009: 移除多余的nil检查，直接检查长度
+	if len(availableConns) == 0 {
 		r.mu.Lock()
 		defer r.mu.Unlock()
 		availableConns = r.connections
@@ -541,7 +543,7 @@ func (r *RoundRobinBalancer) Add(conn interface{}) {
 
 	r.connections = append(r.connections, conn)
 	log.Printf("添加连接到负载均衡器，当前连接数: %d", len(r.connections))
-	
+
 	// 使用接口收集指标而非直接调用 metrics 包
 	if r.metricsCollector != nil {
 		// 移除未使用的ctx和startTime变量
