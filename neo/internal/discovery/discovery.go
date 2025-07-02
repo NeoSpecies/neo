@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"neo/internal/types"
-	"sync"
 	"time"
 )
 
@@ -55,9 +54,9 @@ type Discovery struct {
 	storage  types.Storage
 	events   chan types.Event
 	watchers map[string][]chan types.Event
-	mu       sync.RWMutex
-	ctx      context.Context
-	cancel   context.CancelFunc
+	// 删除未使用的mu字段
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
 // New 创建服务发现实例
@@ -72,37 +71,45 @@ func New(storage types.Storage) *Discovery {
 	}
 }
 
-// Register 注册服务（结构体方法，需通过Discovery实例调用）
-func (d *Discovery) Register(ctx context.Context, s *types.Service) error {
+// 移除原有Service、EventType、Event、Storage和Discovery定义
+
+// Register 注册服务（结构体方法）
+// 创建包装结构体
+type DiscoveryService struct {
+	*types.Discovery
+}
+
+// 重构Register方法
+func (d *DiscoveryService) Register(ctx context.Context, s *types.Service) error {
 	// 调试打印：注册请求详情
 	fmt.Printf("[DEBUG] 收到服务注册请求: ID=%s, Name=%s, Address=%s:%d\n", s.ID, s.Name, s.Address, s.Port)
 	fmt.Printf("[DEBUG] 注册元数据: %+v\n", s.Metadata)
 
 	s.UpdatedAt = time.Now()
 	s.ExpireAt = s.UpdatedAt.Add(30 * time.Second)
-	if err := d.storage.Register(ctx, s); err != nil {
+	if err := d.Storage.Register(ctx, s); err != nil {
 		fmt.Printf("[ERROR] 服务注册失败: %v\n", err)
 		return err
 	}
 
 	// 调试打印：注册成功
 	fmt.Printf("[DEBUG] 服务注册成功: ID=%s, 过期时间=%v\n", s.ID, s.ExpireAt)
-	d.events <- types.Event{Type: types.EventRegistered, Service: s}
+	d.Events <- types.Event{Type: types.EventRegistered, Service: s}
 	return nil
 }
 
-// Watch 监听指定服务的变更事件
-func (d *Discovery) Watch(serviceName string) <-chan types.Event {
-	d.mu.Lock()
-	defer d.mu.Unlock()
+// 重构Watch方法
+func (d *DiscoveryService) Watch(serviceName string) <-chan types.Event {
+	d.Mu.Lock()
+	defer d.Mu.Unlock()
 	ch := make(chan types.Event, 10)
-	d.watchers[serviceName] = append(d.watchers[serviceName], ch)
-	fmt.Printf("[DEBUG] 新增服务监听器: 服务名称=%s, 监听器数量=%d\n", serviceName, len(d.watchers[serviceName]))
+	d.Watchers[serviceName] = append(d.Watchers[serviceName], ch)
+	fmt.Printf("[DEBUG] 新增服务监听器: 服务名称=%s, 监听器数量=%d\n", serviceName, len(d.Watchers[serviceName]))
 
 	go func() {
 		for {
 			select {
-			case event := <-d.events:
+			case event := <-d.Events:
 				if event.Service.Name == serviceName {
 					fmt.Printf("[DEBUG] 服务事件触发: 类型=%v, 服务名称=%s, ID=%s\n", event.Type, event.Service.Name, event.Service.ID)
 					select {
@@ -111,7 +118,7 @@ func (d *Discovery) Watch(serviceName string) <-chan types.Event {
 						fmt.Printf("[WARN] 事件通道已满，丢弃事件: %v\n", event.Type)
 					}
 				}
-			case <-d.ctx.Done():
+			case <-d.Ctx.Done():
 				close(ch)
 				fmt.Printf("[DEBUG] 监听器已关闭: 服务名称=%s\n", serviceName)
 				return
@@ -121,7 +128,7 @@ func (d *Discovery) Watch(serviceName string) <-chan types.Event {
 	return ch
 }
 
-// GetServices 根据服务名称获取所有注册的服务实例
-func (d *Discovery) GetServices(serviceName string) ([]*types.Service, error) {
-	return d.storage.List(d.ctx, serviceName)
+// 重构GetServices方法
+func (d *DiscoveryService) GetServices(serviceName string) ([]*types.Service, error) {
+	return d.Storage.List(d.Ctx, serviceName)
 }

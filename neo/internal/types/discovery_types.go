@@ -2,6 +2,7 @@ package types
 
 import (
 	"context"
+	"sync"
 	"time"
 )
 
@@ -39,4 +40,27 @@ type Storage interface {
 	Get(ctx context.Context, serviceID string) (*Service, error)
 	List(ctx context.Context, serviceName string) ([]*Service, error)
 	Renew(ctx context.Context, serviceID string) error
+}
+
+// Discovery 服务发现核心组件
+// 修改字段为大写开头
+type Discovery struct {
+	Storage  Storage
+	Events   chan Event
+	Watchers map[string][]chan Event
+	Mu       sync.RWMutex
+	Ctx      context.Context
+	Cancel   context.CancelFunc
+}
+
+// NewDiscovery 创建服务发现实例
+func NewDiscovery(storage Storage) *Discovery {
+	ctx, cancel := context.WithCancel(context.Background())
+	return &Discovery{
+		Storage:  storage,
+		Events:   make(chan Event, 100),
+		Watchers: make(map[string][]chan Event),
+		Ctx:      ctx,
+		Cancel:   cancel,
+	}
 }

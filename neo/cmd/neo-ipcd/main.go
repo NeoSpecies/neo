@@ -68,11 +68,16 @@ func main() {
 
 			// 调用发现服务的注册方法
 			// 1. 确保已初始化Discovery实例（通常在main函数开头）
+			// 修改服务发现初始化代码
 			// 初始化内存存储（使用实际构造函数）
 			storage := discovery.NewInMemoryStorage()
-			discoveryService := discovery.New(storage)
+			// 创建Discovery实例 - 修改这一行
+			// discoveryInstance := discovery.New(storage)
+			discoveryInstance := types.NewDiscovery(storage)
+			// 包装成DiscoveryService
+			discoveryService := &discovery.DiscoveryService{Discovery: discoveryInstance}
 
-			// 2. 在服务注册处使用实例方法
+			// 调用Register方法
 			if err := discoveryService.Register(context.Background(), service); err != nil {
 				return json.Marshal(map[string]interface{}{
 					"success": false,

@@ -31,3 +31,8 @@
 - 迁移类型: LoadBalanceStrategy, MetricsCollector, Balancer, RoundRobinBalancer
 - 影响范围: connection/balancer.go
 - 状态: 成功
+
+2025-06-17: 修改main.go，使用DiscoveryService包装结构体调用Register方法
+2025-06-17: 删除discovery.go中未使用的mu字段，解决U1000警告
+2025-06-17: 将discovery模块的Discovery结构体字段改为导出类型，解决跨包访问问题
+2025-06-17: 在discovery包中创建DiscoveryService包装结构体，解决非本地类型方法定义限制
