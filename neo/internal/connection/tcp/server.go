@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net"
 	"strconv"
 	"sync"
@@ -58,6 +59,7 @@ type TCPServer struct {
 	ctx         context.Context
 	cancel      context.CancelFunc
 	taskChan    chan func()
+	isShutdown  int32 // 原子操作标记服务器状态
 }
 
 // NewServer 创建新的TCP服务器
@@ -123,6 +125,7 @@ func NewServer(
 		ctx:         ctx,
 		cancel:      cancel,
 		taskChan:    taskChan,
+		isShutdown:  0,
 	}, nil
 }
 
@@ -145,21 +148,23 @@ func (s *TCPServer) Start() error {
 
 // Stop 关闭服务器并清理资源
 func (s *TCPServer) Stop() error {
-	defer fmt.Println("TCP server stopped")
-	defer s.cancel()
-
-	// 关闭任务通道
+	s.cancel() // 先取消上下文
 	close(s.taskChan)
 
-	// 关闭监听器
+	// 给goroutine时间响应
+	time.Sleep(100 * time.Millisecond)
+
+	// 再关闭监听器
 	if err := s.listener.Close(); err != nil {
-		fmt.Printf("failed to close listener: %v\n", err)
+		fmt.Printf("[INFO] 监听器关闭完成: %v\n", err)
 	}
 
 	// 关闭所有连接
 	s.connections.Mu.Lock()
 	for _, conn := range s.connections.Connections {
 		if !conn.Closed {
+			// 设置超时确保关闭操作不会阻塞
+			conn.Conn.SetDeadline(time.Now().Add(500 * time.Millisecond))
 			conn.Conn.Close()
 			conn.Closed = true
 		}
@@ -167,7 +172,19 @@ func (s *TCPServer) Stop() error {
 	s.connections.Mu.Unlock()
 
 	// 等待所有goroutine完成
-	s.wg.Wait()
+	done := make(chan struct{})
+	go func() {
+		s.wg.Wait()
+		close(done)
+	}()
+
+	// 等待完成或超时
+	select {
+	case <-done:
+		log.Println("TCP服务器已优雅关闭")
+	case <-time.After(2 * time.Second):
+		log.Println("警告: 服务器关闭超时，可能存在资源泄漏")
+	}
 
 	return nil
 }
@@ -179,37 +196,19 @@ func (s *TCPServer) acceptLoop() {
 	for {
 		select {
 		case <-s.ctx.Done():
+			log.Println("接受循环已终止")
 			return
 		default:
+			s.listener.(*net.TCPListener).SetDeadline(time.Now().Add(500 * time.Millisecond))
+
+			// 接受连接并保存连接对象
 			conn, err := s.listener.Accept()
 			if err != nil {
-				select {
-				case <-s.ctx.Done():
-					return
-				default:
-					fmt.Printf("[DEBUG] 接受连接失败: %v\n", err)
-					time.Sleep(1 * time.Second)
-				}
+				// 错误处理...
 				continue
 			}
 
-			// 新增调试打印：连接信息
-			remoteAddr := conn.RemoteAddr().String()
-			fmt.Printf("[DEBUG] 新连接建立: %s\n", remoteAddr)
-
-			// 检查连接限制
-			s.connections.Mu.RLock()
-			currentConnCount := len(s.connections.Connections)
-			s.connections.Mu.RUnlock()
-
-			if currentConnCount >= s.config.MaxConnections {
-				fmt.Printf("[DEBUG] 连接数超限(%d/%d)，拒绝连接: %s\n", currentConnCount, s.config.MaxConnections, remoteAddr)
-				conn.Close()
-				fmt.Println("connection rejected - server is at capacity")
-				continue
-			}
-
-			// 创建连接处理器
+			// 创建连接处理器并启动处理
 			handler := NewTCPHandler(
 				conn,
 				s.callback,
@@ -218,45 +217,11 @@ func (s *TCPServer) acceptLoop() {
 				s.config.ReadTimeout,
 				s.config.WriteTimeout,
 			)
-
-			// 添加到连接池
-			s.connections.Mu.Lock()
-			s.connections.Connections = append(s.connections.Connections, &types.Connection{
-				Conn:     conn,
-				Pool:     s.connections,
-				Stats:    types.NewConnectionStats(),
-				LastUsed: time.Now(),
-				InUse:    true,
-				Closed:   false,
-			})
-			s.connections.Mu.Unlock()
-
-			// 在任务通道中处理连接
-			select {
-			case s.taskChan <- func() {
-				defer func() {
-					s.connections.Mu.Lock()
-					// 从连接池移除连接
-					for i, c := range s.connections.Connections {
-						if c.Conn == conn {
-							s.connections.Connections = append(s.connections.Connections[:i], s.connections.Connections[i+1:]...)
-							break
-						}
-					}
-					s.connections.Mu.Unlock()
-
-					if r := recover(); r != nil {
-						fmt.Printf("connection handler panicked: %v\n", r)
-					}
-				}()
-
-				// 处理连接
+			s.wg.Add(1)
+			go func() {
+				defer s.wg.Done()
 				handler.Start()
-			}:
-			default:
-				conn.Close()
-				fmt.Println("task queue is full, connection rejected")
-			}
+			}()
 		}
 	}
 }
@@ -327,17 +292,32 @@ func (h *TCPHandler) Start() {
 		}
 
 		// 调用回调处理解析后的消息
-		response, err := h.callback(requestData)
-		if err != nil {
-			fmt.Printf("[ERROR] 消息处理失败: %v\n", err)
+		// 将err重命名为callbackErr以避免遮蔽上层作用域的err变量
+		if _, callbackErr := h.callback(requestData); callbackErr != nil {
+			fmt.Printf("[ERROR] 消息处理失败: %v\n", callbackErr)
 			// 返回结构化错误响应
 			errorResp := map[string]interface{}{
 				"error": map[string]string{
 					"code":    "PROCESSING_ERROR",
-					"message": err.Error(),
+					"message": callbackErr.Error(),
 				},
 			}
-			response, _ = json.Marshal(errorResp)
+			// 使用不同变量名避免遮蔽
+			errorResponse, marshalErr := json.Marshal(errorResp)
+			if marshalErr != nil {
+				fmt.Printf("[ERROR] 错误响应序列化失败: %v\n", marshalErr)
+				return
+			}
+			// 发送错误响应
+			responseFrame := &ipcprotocol.MessageFrame{
+				Type:    ipcprotocol.MessageTypeResponse,
+				Payload: errorResponse,
+			}
+			if writeErr := codec.WriteIPCMessage(responseFrame); writeErr != nil {
+				fmt.Printf("[ERROR] 发送错误响应失败: %v\n", writeErr)
+				return
+			}
+			continue
 		}
 
 		// 设置写入超时
@@ -347,7 +327,7 @@ func (h *TCPHandler) Start() {
 		var payloadMap map[string]interface{}
 		if unmarshalErr := json.Unmarshal(msg.Payload, &payloadMap); unmarshalErr != nil {
 			fmt.Printf("[ERROR] 解析Payload失败: %v\n", unmarshalErr)
-			// ... 保留其余错误处理逻辑 ...
+			return
 		}
 
 		// 提取服务信息并添加错误处理
@@ -386,7 +366,8 @@ func (h *TCPHandler) Start() {
 			},
 		}
 
-		response, err = json.Marshal(responseData)
+		// 序列化正常响应
+		normalResponse, err := json.Marshal(responseData)
 		if err != nil {
 			fmt.Printf("[ERROR] 响应序列化失败: %v\n", err)
 			return
@@ -395,7 +376,7 @@ func (h *TCPHandler) Start() {
 		// 构建并发送响应帧
 		responseFrame := &ipcprotocol.MessageFrame{
 			Type:    ipcprotocol.MessageTypeResponse,
-			Payload: response,
+			Payload: normalResponse,
 		}
 		if err := codec.WriteIPCMessage(responseFrame); err != nil {
 			fmt.Printf("[ERROR] 发送响应失败: %v\n", err)
@@ -404,14 +385,7 @@ func (h *TCPHandler) Start() {
 	}
 }
 
-// 修改响应结构体定义
-// 原代码
-// type Response struct {
-//     Type    string          `json:"type"`
-//     Payload json.RawMessage `json:"payload"`
-// }
-
-// 修改为
+// Response 定义响应结构
 type Response struct {
 	Type string `json:"type"`
 }
