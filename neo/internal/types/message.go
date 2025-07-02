@@ -1,8 +1,6 @@
 package types
 
-import (
-	"encoding/json"
-)
+import "encoding/json"
 
 // 请求结构
 type Request struct {
@@ -35,3 +33,17 @@ const (
 	ErrorCodeTimeout          ErrorCode = "TIMEOUT"
 	ErrorCodePermissionDenied ErrorCode = "PERMISSION_DENIED"
 )
+
+// 消息类型定义
+const (
+	MessageTypeRequest  = "request"
+	MessageTypeResponse = "response"
+	MessageTypeError    = "error"
+	MessageTypeEvent    = "event"
+)
+
+// 消息帧结构
+type MessageFrame struct {
+	Type    string          `json:"type"`
+	Payload json.RawMessage `json:"payload"`
+}

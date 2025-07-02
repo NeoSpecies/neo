@@ -1,0 +1,24 @@
+[2025-06-17 10:00:00] 已完成压缩相关类型迁移
+- 创建文件: /www/neo/neo/internal/types/compression_types.go
+- 迁移类型: CompressionType, Compressor
+- 影响范围: ipcprotocol/compression.go
+- 状态: 成功[2025-06-17 11:00:00] 已完成任务相关类型迁移
+- 创建文件: /www/neo/neo/internal/types/task_types.go
+- 迁移类型: TaskStatus, AsyncTask, TaskManager
+- 影响范围: task/async_task.go
+- 状态: 成功[2025-06-17 14:00:00] 已完成错误类型迁移
+- 修改文件: /www/neo/neo/internal/types/errors.go
+- 迁移错误变量: ErrInvalidMessage, ErrChecksumMismatch, ErrMessageTooLarge, ErrCompressionFailed, ErrDecompressionFailed, ErrInvalidCompression, ErrMaxRetryExceeded, ErrNetworkError, ErrBusinessError, ErrTimeout, ErrCircuitBreakerOpen
+- 影响范围: ipcprotocol/errors.go
+- 状态: 成功[2025-06-17 16:00:00] 已完成消息帧类型迁移
+- 修改文件: /www/neo/neo/internal/types/message.go
+- 迁移类型: MessageFrame, MessageType常量
+- 影响范围: ipcprotocol/protocol.go
+- 状态: 成功
+
+[2025-06-17 12:47:20] 已修复connection/tcp/codec.go导入问题
+[2025-06-17 12:51:52] 已完成Worker相关类型迁移
+- 创建文件: /www/neo/neo/internal/types/worker_types.go
+- 迁移类型: Task, TaskResult, Worker, WorkerPoolConfig, WorkerPool
+- 影响范围: transport/worker_pool.go
+- 状态: 待验证

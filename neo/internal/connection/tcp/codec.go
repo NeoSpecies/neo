@@ -8,9 +8,8 @@ import (
 	"fmt"
 	"hash/crc32"
 	"io"
-	"neo/internal/ipcprotocol"
+	"neo/internal/types"
 	"sync"
-	// 删除此行: "github.com/google/uuid"
 )
 
 // 错误类型定义
@@ -53,7 +52,7 @@ func NewCodec(reader io.Reader, writer io.Writer) *Codec {
 }
 
 // 读取IPC消息
-func (c *Codec) ReadIPCMessage() (*ipcprotocol.MessageFrame, error) {
+func (c *Codec) ReadIPCMessage() (*types.MessageFrame, error) {
 	// 移除帧长度前缀依赖，直接读取协议内容
 	reader := bufio.NewReader(c.reader)
 	var magic uint16
@@ -172,7 +171,7 @@ func (c *Codec) ReadIPCMessage() (*ipcprotocol.MessageFrame, error) {
 	port := int(serviceData["port"].(float64))
 
 	// 创建正确的MessageFrame结构
-	messageFrame := &ipcprotocol.MessageFrame{
+	messageFrame := &types.MessageFrame{
 		Type:    action,
 		Payload: []byte(fmt.Sprintf(`{"service_id":"%s","name":"%s","address":"%s","port":%d}`, serviceID, serviceName, address, port)),
 	}
@@ -191,7 +190,7 @@ const (
 
 // WriteIPCMessage 按协议格式写入消息
 // 确保响应消息完整封装
-func (c *Codec) WriteIPCMessage(frame *ipcprotocol.MessageFrame) error {
+func (c *Codec) WriteIPCMessage(frame *types.MessageFrame) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 

@@ -4,49 +4,29 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
-	"os/signal"
-	"syscall"
-
+	"log"
 	"neo/internal/config"
 	"neo/internal/connection/tcp"
 	"neo/internal/discovery"
 	"neo/internal/ipcprotocol"
+	"neo/internal/metrics"
 	"neo/internal/transport"
 	"neo/internal/types"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/mitchellh/mapstructure"
 )
 
-// workerPoolAdapter 适配transport.WorkerPool到common.WorkerPool接口
-type workerPoolAdapter struct {
-	pool *transport.WorkerPool
-}
-
-// 提交任务示例
-func (a *workerPoolAdapter) Submit(taskFunc func()) error {
-	task := &transport.Task{
-		Ctx:    context.Background(),
-		Result: make(chan *transport.TaskResult, 1),
-	}
-
-	// 启动协程执行任务函数
-	go func() {
-		taskFunc()
-		task.Result <- &transport.TaskResult{}
-	}()
-
-	return a.pool.Submit(task) // 修正：使用小写pool而非workerPool
-}
-
-// Stop 实现common.WorkerPool接口的Stop方法（无返回值）
-func (a *workerPoolAdapter) Stop() {
-	a.pool.Stop()
-}
-
 func main() {
 	// 获取全局配置
 	globalConfig := config.GetGlobalConfig()
+
+	// 启动指标服务器（修复循环依赖）
+	if err := metrics.StartServer(&globalConfig.Metrics); err != nil {
+		log.Fatalf("启动监控服务器失败: %v", err)
+	}
 
 	// 初始化服务注册和工作池
 	serviceRegistry := transport.NewServiceRegistry()
@@ -54,7 +34,8 @@ func main() {
 		globalConfig.IPC.WorkerCount,
 		globalConfig.IPC.WorkerCount*2, // 队列容量
 	)
-	adaptedWorkerPool := &workerPoolAdapter{pool: workerPool}
+	// 使用transport包中已实现完整接口的workerPoolAdapter
+	adaptedWorkerPool := &transport.WorkerPoolAdapter{WorkerPool: workerPool}
 
 	serverConfig := &types.TCPConfig{
 		MaxConnections:    globalConfig.IPC.MaxConnections,

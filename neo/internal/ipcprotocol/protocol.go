@@ -2,6 +2,7 @@ package ipcprotocol
 
 import (
 	"encoding/json"
+	"fmt"
 	"neo/internal/types"
 	"time"
 )
@@ -14,10 +15,36 @@ const (
 	MessageTypeEvent    = "event"
 )
 
-// 消息帧结构
-type MessageFrame struct {
-	Type    string          `json:"type"`
-	Payload json.RawMessage `json:"payload"`
+// ipcTask 实现types.Task接口
+// 用于包装IPC请求任务并提交到工作池
+// 实现说明：2025.06.17新增，解决接口不匹配问题
+
+type ipcTask struct {
+	taskID   string
+	req      *types.Request
+	registry types.ServiceRegistry
+}
+
+// ID 返回任务ID，实现types.Task接口
+func (t *ipcTask) ID() string {
+	return t.taskID
+}
+
+// Execute 执行任务，实现types.Task接口
+func (t *ipcTask) Execute() (interface{}, error) {
+	// 从服务注册表查找服务
+	handler, exists := t.registry.GetHandler(t.req.Service)
+	if !exists {
+		return nil, fmt.Errorf("service not found: %s", t.req.Service)
+	}
+
+	// 调用服务方法
+	resp, err := handler.Handle(t.req)
+	if err != nil {
+		return nil, err
+	}
+
+	return resp, nil
 }
 
 // 创建新请求
@@ -28,12 +55,13 @@ func NewRequest(service, method string, params interface{}) (*types.Request, err
 	}
 
 	return &types.Request{
-		RequestID: NewRequestID(),
-		Service:   service,
-		Method:    method,
-		Params:    paramsJSON,
-		Timestamp: time.Now().UnixMilli(),
-	}, nil
+			RequestID: NewRequestID(),
+			Service:   service,
+			Method:    method,
+			Params:    paramsJSON,
+			Timestamp: time.Now().UnixMilli(),
+		},
+		nil
 }
 
 // 创建新响应
@@ -48,11 +76,12 @@ func NewResponse(requestID string, data interface{}) (*types.Response, error) {
 	}
 
 	return &types.Response{
-		RequestID: requestID,
-		Code:      types.ErrorCodeSuccess,
-		Data:      dataJSON,
-		Timestamp: time.Now().UnixMilli(),
-	}, nil
+			RequestID: requestID,
+			Code:      types.ErrorCodeSuccess,
+			Data:      dataJSON,
+			Timestamp: time.Now().UnixMilli(),
+		},
+		nil
 }
 
 // 创建错误响应
@@ -68,7 +97,7 @@ func NewErrorResponse(requestID string, code types.ErrorCode, message string) *t
 // ProcessMessage 处理IPC消息
 func ProcessMessage(data []byte, registry types.ServiceRegistry, workerPool types.WorkerPool) ([]byte, error) {
 	// 解析消息帧
-	var frame MessageFrame
+	var frame types.MessageFrame
 	if err := json.Unmarshal(data, &frame); err != nil {
 		resp := NewErrorResponse("", types.ErrorCodeInvalidRequest, "Invalid message format")
 		return marshalResponse(resp)
@@ -83,34 +112,31 @@ func ProcessMessage(data []byte, registry types.ServiceRegistry, workerPool type
 		}
 
 		// 提交任务到工作池处理
-		resultChan := make(chan *types.Response, 1)
-		err := workerPool.Submit(func() {
-			// 从服务注册表查找服务
-			handler, exists := registry.GetHandler(req.Service)
-			if !exists {
-				resultChan <- NewErrorResponse(req.RequestID, types.ErrorCodeServiceNotFound, "Service not found")
-				return
-			}
-
-			// 调用服务方法
-			resp, err := handler.Handle(&req)
-			if err != nil {
-				resultChan <- NewErrorResponse(req.RequestID, types.ErrorCodeInternalError, err.Error())
-				return
-			}
-
-			resultChan <- resp
-		})
-
-		if err != nil {
-			resp := NewErrorResponse(req.RequestID, types.ErrorCodeInternalError, "Failed to submit task")
-			return marshalResponse(resp)
+		task := &ipcTask{
+			taskID:   req.RequestID,
+			req:      &req,
+			registry: registry,
 		}
+
+		// 提交任务并获取结果通道
+		resultChan := workerPool.Submit(task)
 
 		// 等待结果或超时
 		select {
-		case resp := <-resultChan:
-			return marshalResponse(resp)
+		case result := <-resultChan:
+			if result.Error != nil {
+				resp := NewErrorResponse(req.RequestID, types.ErrorCodeInternalError, result.Error.Error())
+				return marshalResponse(resp)
+			}
+
+			// 将结果转换为Response类型
+			response, ok := result.Result.(*types.Response)
+			if !ok {
+				resp := NewErrorResponse(req.RequestID, types.ErrorCodeInternalError, "invalid response type")
+				return marshalResponse(resp)
+			}
+			return marshalResponse(response)
+
 		case <-time.After(time.Duration(req.Timeout) * time.Millisecond):
 			resp := NewErrorResponse(req.RequestID, types.ErrorCodeTimeout, "Request timeout")
 			return marshalResponse(resp)
@@ -124,7 +150,7 @@ func ProcessMessage(data []byte, registry types.ServiceRegistry, workerPool type
 
 // 辅助函数：序列化响应
 func marshalResponse(resp *types.Response) ([]byte, error) {
-	frame := MessageFrame{
+	frame := types.MessageFrame{
 		Type:    MessageTypeResponse,
 		Payload: []byte(json.RawMessage(resp.Data)),
 	}

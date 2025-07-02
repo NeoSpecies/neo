@@ -126,10 +126,10 @@ func (h *ConnectionHandler) HandleConnection(conn net.Conn) error {
 }
 
 // processMessageFrame 处理接收到的消息帧
-func (h *ConnectionHandler) processMessageFrame(frame *ipcprotocol.MessageFrame) (*ipcprotocol.MessageFrame, error) {
+func (h *ConnectionHandler) processMessageFrame(frame *types.MessageFrame) (*types.MessageFrame, error) {
 	// 实现消息处理逻辑
 	// 此处为示例实现，实际应根据业务需求处理
-	return &ipcprotocol.MessageFrame{
+	return &types.MessageFrame{
 		Type:    ipcprotocol.MessageTypeResponse,
 		Payload: []byte("已处理: " + string(frame.Payload)),
 	}, nil

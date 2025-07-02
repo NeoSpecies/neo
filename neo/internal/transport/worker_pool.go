@@ -91,6 +91,24 @@ type WorkerPool struct {
 	wg          sync.WaitGroup
 }
 
+// SetWorkerCount 设置工作协程数量
+func (wp *WorkerPool) SetWorkerCount(count int) {
+	if count <= 0 {
+		return
+	}
+	
+	// 如果工作池未运行，直接更新workerCount
+	if !wp.running {
+		wp.workerCount = count
+		return
+	}
+	
+	// 如果工作池已运行，这里可以添加动态调整worker数量的逻辑
+	// 简化实现：仅更新workerCount字段
+	wp.workerCount = count
+	log.Printf("工作池worker数量已更新为: %d", count)
+}
+
 // NewWorkerPool 创建新的工作池
 func NewWorkerPool(workerCount, queueSize int) *WorkerPool {
 	if workerCount <= 0 {

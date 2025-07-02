@@ -309,7 +309,7 @@ func (h *TCPHandler) Start() {
 				return
 			}
 			// 发送错误响应
-			responseFrame := &ipcprotocol.MessageFrame{
+			responseFrame := &types.MessageFrame{
 				Type:    ipcprotocol.MessageTypeResponse,
 				Payload: errorResponse,
 			}
@@ -374,7 +374,7 @@ func (h *TCPHandler) Start() {
 		}
 
 		// 构建并发送响应帧
-		responseFrame := &ipcprotocol.MessageFrame{
+		responseFrame := &types.MessageFrame{
 			Type:    ipcprotocol.MessageTypeResponse,
 			Payload: normalResponse,
 		}

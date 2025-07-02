@@ -14,6 +14,81 @@ import (
 	"neo/internal/types"
 )
 
+// 实现common.WorkerPool接口的Submit方法
+func (a *WorkerPoolAdapter) Submit(task types.Task) chan types.TaskResult {
+	resultChan := make(chan types.TaskResult, 1)
+
+	// 创建transport.Task包装types.Task
+	transportTask := &Task{
+		Ctx:    context.Background(),
+		Result: make(chan *TaskResult, 1),
+	}
+
+	// 启动goroutine处理任务
+	go func() {
+		defer close(resultChan)
+
+		// 执行types.Task的Execute方法
+		execResult, execErr := task.Execute()
+
+		// 转换为types.TaskResult
+		typesResult := types.TaskResult{
+			TaskID: task.ID(),
+			Result: execResult,
+			Error:  execErr,
+		}
+
+		// 发送结果
+		resultChan <- typesResult
+	}()
+
+	// 提交到工作池
+	if err := a.WorkerPool.Submit(transportTask); err != nil {
+		resultChan <- types.TaskResult{
+			TaskID: task.ID(),
+			Error:  fmt.Errorf("任务提交失败: %w", err),
+		}
+	}
+
+	return resultChan
+}
+
+// types.WorkerPool接口的Stop方法
+func (a *WorkerPoolAdapter) Stop() {
+	a.WorkerPool.Stop()
+}
+
+// SetWorkerCount 实现types.WorkerPool接口的SetWorkerCount方法
+func (a *WorkerPoolAdapter) SetWorkerCount(count int) {
+	a.WorkerPool.SetWorkerCount(count)
+}
+
+// Shutdown 实现types.WorkerPool接口的Shutdown方法
+func (a *WorkerPoolAdapter) Shutdown() {
+	a.WorkerPool.Stop()
+}
+
+// IPC服务器
+type IPCServer struct {
+	config          IPCServerConfig
+	tcpServer       types.Server
+	serviceRegistry *ServiceRegistry
+	workerPool      *WorkerPool
+	metrics         *types.Metrics
+
+	ctx    context.Context
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
+
+	mu      sync.Mutex
+	started bool
+}
+
+// 注册服务处理器
+func (s *IPCServer) RegisterService(serviceName string, handler types.ServiceHandler) {
+	s.serviceRegistry.Register(serviceName, handler)
+}
+
 // IPC服务器配置
 type IPCServerConfig struct {
 	TCPConfig       types.TCPConfig
@@ -38,56 +113,8 @@ func NewIPCServerConfigFromGlobal(globalConfig *types.GlobalConfig) IPCServerCon
 }
 
 // WorkerPool适配器：解决*WorkerPool与common.WorkerPool接口不兼容问题
-type workerPoolAdapter struct {
-	workerPool *WorkerPool
-}
-
-// 实现common.WorkerPool接口的Submit方法
-func (a *workerPoolAdapter) Submit(taskFunc func()) error {
-	// 创建transport.Task实例
-	task := &Task{
-		Ctx:    context.Background(),
-		Result: make(chan *TaskResult, 1),
-	}
-
-	// 将任务函数包装到Task的处理逻辑中
-	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				log.Printf("任务执行发生恐慌: %v", r)
-				task.Result <- &TaskResult{Error: fmt.Errorf("任务执行恐慌: %v", r)}
-			}
-		}()
-
-		// 执行任务函数
-		taskFunc()
-		// 发送成功结果
-		task.Result <- &TaskResult{Data: []byte("任务执行成功")}
-	}()
-
-	// 提交transport.Task到工作池
-	return a.workerPool.Submit(task)
-}
-
-// types.WorkerPool接口的Stop方法
-func (a *workerPoolAdapter) Stop() {
-	a.workerPool.Stop()
-}
-
-// IPC服务器
-type IPCServer struct {
-	config          IPCServerConfig
-	tcpServer       types.Server
-	serviceRegistry *ServiceRegistry
-	workerPool      *WorkerPool
-	metrics         *types.Metrics
-
-	ctx    context.Context
-	cancel context.CancelFunc
-	wg     sync.WaitGroup
-
-	mu      sync.Mutex
-	started bool
+type WorkerPoolAdapter struct {
+	WorkerPool *WorkerPool // 首字母大写使其可导出
 }
 
 // 创建新的IPC服务器
@@ -106,8 +133,8 @@ func NewIPCServer(config IPCServerConfig) (*IPCServer, error) {
 	)
 
 	// 创建工作池适配器
-	workerPoolAdaptor := &workerPoolAdapter{
-		workerPool: workerPool,
+	workerPoolAdaptor := &WorkerPoolAdapter{
+		WorkerPool: workerPool,
 	}
 
 	// 创建TCP服务器
@@ -137,7 +164,7 @@ func NewIPCServer(config IPCServerConfig) (*IPCServer, error) {
 }
 
 // 添加TCP服务器工厂方法
-func createTCPServer(config *types.TCPConfig, registry *ServiceRegistry, workerPool types.WorkerPool, metrics *types.Metrics) (types.Server, error) {
+func createTCPServer(config *types.TCPConfig, registry *ServiceRegistry, workerPool types.WorkerPool, _metrics *types.Metrics) (types.Server, error) {
 	// 创建消息回调函数
 	callback := func(data []byte) ([]byte, error) {
 		// 实现消息处理逻辑
@@ -198,9 +225,4 @@ func (s *IPCServer) Stop() error {
 
 	s.started = false
 	return nil
-}
-
-// 注册服务处理器
-func (s *IPCServer) RegisterService(serviceName string, handler types.ServiceHandler) {
-	s.serviceRegistry.Register(serviceName, handler)
 }

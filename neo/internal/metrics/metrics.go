@@ -3,7 +3,6 @@ package metrics
 import (
 	"context"
 	"log"
-	"neo/internal/config"
 	"neo/internal/types"
 	"net/http"
 	"sync"
@@ -165,10 +164,9 @@ func GetDefaultMetrics() *types.Metrics {
 }
 
 // StartServer 启动监控服务器
-func StartServer() error {
-	cfg := config.GetGlobalConfig()
-
-	if !cfg.Metrics.Enabled {
+// 修改StartServer函数，通过参数注入配置
+func StartServer(cfg *types.MetricsConfig) error {
+	if !cfg.Enabled {
 		log.Println("监控功能已禁用")
 		return nil
 	}
@@ -176,7 +174,7 @@ func StartServer() error {
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", promhttp.HandlerFor(globalRegistry, promhttp.HandlerOpts{}))
 
-	addr := cfg.Metrics.PrometheusAddress
+	addr := cfg.PrometheusAddress
 	server := &http.Server{
 		Addr:    addr,
 		Handler: mux,

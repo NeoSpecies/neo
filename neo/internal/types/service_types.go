@@ -24,11 +24,12 @@ type ServiceRegistry interface {
 	GetHandler(service string) (ServiceHandler, bool)
 }
 
+// 删除以下重复定义
 // WorkerPool 工作池接口
-type WorkerPool interface {
-	Submit(task func()) error
-	Stop()
-}
+// type WorkerPool interface {
+//	Submit(task func()) error
+//	Stop()
+// }
 
 // ServerConfig 服务器配置接口
 type ServerConfig interface {

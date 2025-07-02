@@ -2,14 +2,14 @@ package http
 
 import (
 	"fmt"
-	"net/http"
 	"neo/internal/config"
 	"neo/internal/types"
+	"net/http"
 )
 
 // Server 表示HTTP服务器实例
 type Server struct {
-	config     *types.IPCConfig  // 使用types包中的IPCConfig
+	config     *types.IPCConfig // 使用types包中的IPCConfig
 	httpServer *http.Server
 }
 

@@ -15,7 +15,7 @@ const FrameDelimiter = '\x00'
 // 消息处理器接口
 type MessageHandler interface {
 	HandleRequest(request *types.Request) (*types.Response, error)
-	HandleEvent(event *MessageFrame) error
+	HandleEvent(event *types.MessageFrame) error
 }
 
 // 协议编解码器
@@ -34,7 +34,7 @@ func NewCodec(reader io.Reader, writer io.Writer) *Codec {
 }
 
 // 读取消息帧
-func (c *Codec) ReadFrame() (*MessageFrame, error) {
+func (c *Codec) ReadFrame() (*types.MessageFrame, error) {
 	// 读取直到分隔符
 	data, err := c.reader.ReadBytes(FrameDelimiter)
 	if err != nil {
@@ -52,7 +52,7 @@ func (c *Codec) ReadFrame() (*MessageFrame, error) {
 	}
 
 	// 解析消息帧
-	var frame MessageFrame
+	var frame types.MessageFrame
 	if err := json.Unmarshal(data, &frame); err != nil {
 		return nil, errors.New("解析消息帧失败: " + err.Error())
 	}
@@ -61,7 +61,7 @@ func (c *Codec) ReadFrame() (*MessageFrame, error) {
 }
 
 // 写入消息帧
-func (c *Codec) WriteFrame(frame *MessageFrame) error {
+func (c *Codec) WriteFrame(frame *types.MessageFrame) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
