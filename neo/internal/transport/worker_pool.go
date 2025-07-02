@@ -7,6 +7,8 @@ import (
 	"log"
 	"sync"
 	"time"
+
+	"neo/internal/types" // 确保导入types包
 )
 
 // Task 表示工作池中的任务
@@ -89,6 +91,8 @@ type WorkerPool struct {
 	quit        chan struct{}
 	running     bool
 	wg          sync.WaitGroup
+	mu          sync.Mutex // 新增：互斥锁
+	shutdown    bool       // 新增：关闭标志
 }
 
 // SetWorkerCount 设置工作协程数量
@@ -96,13 +100,13 @@ func (wp *WorkerPool) SetWorkerCount(count int) {
 	if count <= 0 {
 		return
 	}
-	
+
 	// 如果工作池未运行，直接更新workerCount
 	if !wp.running {
 		wp.workerCount = count
 		return
 	}
-	
+
 	// 如果工作池已运行，这里可以添加动态调整worker数量的逻辑
 	// 简化实现：仅更新workerCount字段
 	wp.workerCount = count
@@ -167,7 +171,50 @@ func (wp *WorkerPool) Stop() {
 }
 
 // Submit 提交任务到工作池
-func (wp *WorkerPool) Submit(task *Task) error {
+// Submit 实现types.WorkerPool接口的Submit方法
+func (wp *WorkerPool) Submit(task types.Task) chan types.TaskResult {
+	resultChan := make(chan types.TaskResult, 1)
+
+	// 将types.Task转换为transport内部任务
+	transportTask := &Task{
+		Ctx:    context.Background(),
+		Result: make(chan *TaskResult, 1),
+	}
+
+	// 修复：提交transportTask到工作池
+	err := wp.SubmitTransportTask(transportTask)
+	if err != nil {
+		resultChan <- types.TaskResult{
+			TaskID: task.ID(),
+			Error:  err,
+		}
+		close(resultChan)
+		return resultChan
+	}
+
+	// 监听任务结果
+	go func() {
+		defer close(resultChan)
+		select {
+		case res := <-transportTask.Result:
+			resultChan <- types.TaskResult{
+				TaskID: task.ID(),
+				Result: res.Data,
+				Error:  res.Error,
+			}
+		case <-wp.quit:
+			resultChan <- types.TaskResult{
+				TaskID: task.ID(),
+				Error:  errors.New("工作池已停止"),
+			}
+		}
+	}()
+
+	return resultChan
+}
+
+// SubmitTransportTask 重命名原Submit方法，处理内部任务
+func (wp *WorkerPool) SubmitTransportTask(task *Task) error {
 	if !wp.running {
 		return errors.New("工作池未运行")
 	}
@@ -214,4 +261,17 @@ func (wp *WorkerPool) dispatch() {
 			}
 		}
 	}
+}
+
+// 实现Shutdown方法
+func (p *WorkerPool) Shutdown() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if p.shutdown {
+		return
+	}
+
+	p.shutdown = true
+	p.Stop() // 调用现有的Stop方法
 }

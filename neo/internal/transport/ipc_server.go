@@ -7,53 +7,83 @@ import (
 	"log"
 	"sync"
 
-	"github.com/prometheus/client_golang/prometheus"
-
 	"neo/internal/connection/tcp"
 	"neo/internal/ipcprotocol"
 	"neo/internal/types"
 )
 
-// 实现common.WorkerPool接口的Submit方法
+// 本地WorkerPoolAdapter实现，避免在非本地类型上定义方法
+type WorkerPoolAdapter struct {
+	WorkerPool *WorkerPool
+}
+
+// Submit 实现types.WorkerPool接口的Submit方法
 func (a *WorkerPoolAdapter) Submit(task types.Task) chan types.TaskResult {
 	resultChan := make(chan types.TaskResult, 1)
 
-	// 创建transport.Task包装types.Task
+	// 创建transport.Task实例
 	transportTask := &Task{
 		Ctx:    context.Background(),
 		Result: make(chan *TaskResult, 1),
 	}
 
-	// 启动goroutine处理任务
+	// 启动goroutine执行任务
 	go func() {
-		defer close(resultChan)
-
+		defer close(transportTask.Result)
 		// 执行types.Task的Execute方法
-		execResult, execErr := task.Execute()
-
-		// 转换为types.TaskResult
-		typesResult := types.TaskResult{
-			TaskID: task.ID(),
-			Result: execResult,
-			Error:  execErr,
+		result, err := task.Execute()
+		// 将结果转换为[]byte（根据实际情况调整转换逻辑）
+		var data []byte
+		if result != nil {
+			if b, ok := result.([]byte); ok {
+				data = b
+			} else {
+				data = []byte(fmt.Sprintf("%v", result))
+			}
 		}
-
-		// 发送结果
-		resultChan <- typesResult
+		transportTask.Result <- &TaskResult{
+			Data:  data,
+			Error: err,
+		}
 	}()
 
 	// 提交到工作池
-	if err := a.WorkerPool.Submit(transportTask); err != nil {
+	if err := a.WorkerPool.SubmitTransportTask(transportTask); err != nil {
 		resultChan <- types.TaskResult{
 			TaskID: task.ID(),
 			Error:  fmt.Errorf("任务提交失败: %w", err),
 		}
+		close(resultChan)
+		return resultChan
 	}
+
+	// 启动goroutine等待结果
+	go func() {
+		defer close(resultChan)
+		select {
+		case res := <-transportTask.Result:
+			resultChan <- types.TaskResult{
+				TaskID: task.ID(),
+				Result: res.Data,
+				Error:  res.Error,
+			}
+		case <-transportTask.Ctx.Done():
+			resultChan <- types.TaskResult{
+				TaskID: task.ID(),
+				Error:  transportTask.Ctx.Err(),
+			}
+		}
+	}()
 
 	return resultChan
 }
 
-// types.WorkerPool接口的Stop方法
+// Start 启动工作池
+func (a *WorkerPoolAdapter) Start() {
+	a.WorkerPool.Start()
+}
+
+// Stop 实现types.WorkerPool接口的Stop方法
 func (a *WorkerPoolAdapter) Stop() {
 	a.WorkerPool.Stop()
 }
@@ -65,66 +95,32 @@ func (a *WorkerPoolAdapter) SetWorkerCount(count int) {
 
 // Shutdown 实现types.WorkerPool接口的Shutdown方法
 func (a *WorkerPoolAdapter) Shutdown() {
-	a.WorkerPool.Stop()
+	a.WorkerPool.Shutdown()
 }
 
-// IPC服务器
+// IPCServer 本地IPC服务器实现
 type IPCServer struct {
-	config          IPCServerConfig
+	config          types.IPCServerConfig
 	tcpServer       types.Server
 	serviceRegistry *ServiceRegistry
-	workerPool      *WorkerPool
+	workerPool      *WorkerPoolAdapter // 修改为具体类型而非接口
 	metrics         *types.Metrics
-
-	ctx    context.Context
-	cancel context.CancelFunc
-	wg     sync.WaitGroup
-
-	mu      sync.Mutex
-	started bool
+	ctx             context.Context
+	cancel          context.CancelFunc
+	started         bool
+	mu              sync.Mutex
+	wg              sync.WaitGroup
 }
 
-// 注册服务处理器
+// RegisterService 注册服务处理器
 func (s *IPCServer) RegisterService(serviceName string, handler types.ServiceHandler) {
 	s.serviceRegistry.Register(serviceName, handler)
 }
 
-// IPC服务器配置
-type IPCServerConfig struct {
-	TCPConfig       types.TCPConfig
-	WorkerPoolSize  int
-	WorkerQueueSize int
-}
-
-// 从全局配置创建IPC服务器配置
-func NewIPCServerConfigFromGlobal(globalConfig *types.GlobalConfig) IPCServerConfig {
-	return IPCServerConfig{
-		TCPConfig: types.TCPConfig{
-			MaxConnections:    globalConfig.IPC.MaxConnections,
-			MaxMsgSize:        globalConfig.Protocol.MaxMessageSize,
-			ReadTimeout:       globalConfig.IPC.ReadTimeout,
-			WriteTimeout:      globalConfig.IPC.WriteTimeout,
-			WorkerCount:       globalConfig.IPC.WorkerCount,
-			ConnectionTimeout: globalConfig.IPC.ConnectionTimeout,
-		},
-		WorkerPoolSize:  10,
-		WorkerQueueSize: 100,
-	}
-}
-
-// WorkerPool适配器：解决*WorkerPool与common.WorkerPool接口不兼容问题
-type WorkerPoolAdapter struct {
-	WorkerPool *WorkerPool // 首字母大写使其可导出
-}
-
 // 创建新的IPC服务器
-func NewIPCServer(config IPCServerConfig) (*IPCServer, error) {
+func NewIPCServer(config types.IPCServerConfig) (*IPCServer, error) {
 	// 初始化服务注册表
 	serviceRegistry := NewServiceRegistry()
-
-	// 初始化指标收集器
-	registry := prometheus.NewRegistry()
-	metricsCollector := types.NewMetrics(registry)
 
 	// 初始化工作池
 	workerPool := NewWorkerPool(
@@ -144,7 +140,6 @@ func NewIPCServer(config IPCServerConfig) (*IPCServer, error) {
 		&config.TCPConfig,
 		serviceRegistry,
 		workerPoolAdaptor,
-		metricsCollector,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("创建TCP服务器失败: %w", err)
@@ -156,15 +151,14 @@ func NewIPCServer(config IPCServerConfig) (*IPCServer, error) {
 		config:          config,
 		tcpServer:       tcpServer,
 		serviceRegistry: serviceRegistry,
-		workerPool:      workerPool,
-		metrics:         metricsCollector,
+		workerPool:      workerPoolAdaptor,
 		ctx:             ctx,
 		cancel:          cancel,
 	}, nil
 }
 
 // 添加TCP服务器工厂方法
-func createTCPServer(config *types.TCPConfig, registry *ServiceRegistry, workerPool types.WorkerPool, _metrics *types.Metrics) (types.Server, error) {
+func createTCPServer(config *types.TCPConfig, registry *ServiceRegistry, workerPool types.WorkerPool) (types.Server, error) {
 	// 创建消息回调函数
 	callback := func(data []byte) ([]byte, error) {
 		// 实现消息处理逻辑
@@ -218,10 +212,7 @@ func (s *IPCServer) Stop() error {
 	}
 
 	// 停止工作池
-	s.workerPool.Stop()
-
-	// 等待所有goroutine完成
-	s.wg.Wait()
+	s.workerPool.Shutdown()
 
 	s.started = false
 	return nil

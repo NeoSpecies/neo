@@ -1,9 +1,6 @@
 package types
 
 import (
-	"context"
-	"net"
-	"sync"
 	"time"
 )
 
@@ -38,16 +35,3 @@ func (c *TCPConfig) GetHandlerConfig() interface{} {
 
 // MessageCallback 消息处理回调函数类型
 type MessageCallback func([]byte) ([]byte, error)
-
-// TCPServer TCP服务器结构体
-type TCPServer struct {
-	listener    net.Listener
-	config      *TCPConfig
-	metrics     *Metrics
-	connections *TCPConnectionPool
-	callback    MessageCallback
-	wg          sync.WaitGroup
-	ctx         context.Context
-	cancel      context.CancelFunc
-	taskChan    chan func()
-}

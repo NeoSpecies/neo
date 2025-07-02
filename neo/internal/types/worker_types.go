@@ -1,11 +1,5 @@
 package types
 
-// 删除以下未使用的导入
-// import (
-// "sync"
-// "time"
-// )
-
 // 任务接口定义
 type Task interface {
 	ID() string
@@ -31,11 +25,4 @@ type WorkerPoolConfig struct {
 	WorkerCount    int
 	MaxQueueSize   int
 	MaxTaskRetries int
-}
-
-// 工作池接口
-type WorkerPool interface {
-	Submit(task Task) chan TaskResult
-	SetWorkerCount(count int)
-	Shutdown()
 }

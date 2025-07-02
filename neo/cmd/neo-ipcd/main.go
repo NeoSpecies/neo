@@ -34,8 +34,8 @@ func main() {
 		globalConfig.IPC.WorkerCount,
 		globalConfig.IPC.WorkerCount*2, // 队列容量
 	)
-	// 使用transport包中已实现完整接口的workerPoolAdapter
-	adaptedWorkerPool := &transport.WorkerPoolAdapter{WorkerPool: workerPool}
+	// 使用types包中的WorkerPoolAdapter
+	adaptedWorkerPool := &types.WorkerPoolAdapter{WorkerPool: workerPool}
 
 	serverConfig := &types.TCPConfig{
 		MaxConnections:    globalConfig.IPC.MaxConnections,
