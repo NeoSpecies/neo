@@ -17,34 +17,26 @@ type TransportTask struct {
 	Result chan *types.TaskResult
 }
 
-// 保留所有方法实现，但更新类型引用...
-// 可以添加更多任务相关字段
-type Task struct {
-	Ctx    context.Context
-	Result chan *types.TaskResult
-	// 可以添加更多任务相关字段
-}
-
-// Worker 工作协程
-type Worker struct {
+// workerImpl 实现 types.Worker 接口
+type workerImpl struct {
 	id         int
-	workerPool *WorkerPool
-	taskQueue  chan *Task
+	workerPool types.WorkerPool
+	taskQueue  chan types.Task
 	quit       chan struct{}
 }
 
 // NewWorker 创建新的工作协程
-func NewWorker(id int, workerPool *WorkerPool) *Worker {
-	return &Worker{
+func NewWorker(id int, workerPool types.WorkerPool) types.Worker {
+	return &workerImpl{
 		id:         id,
 		workerPool: workerPool,
-		taskQueue:  make(chan *Task),
+		taskQueue:  make(chan types.Task),
 		quit:       make(chan struct{}),
 	}
 }
 
 // Start 启动工作协程
-func (w *Worker) Start() {
+func (w *workerImpl) Start() {
 	go func() {
 		for {
 			select {
@@ -62,35 +54,51 @@ func (w *Worker) Start() {
 }
 
 // Stop 停止工作协程
-func (w *Worker) Stop() {
+func (w *workerImpl) Stop() {
 	close(w.quit)
 }
 
 // processTask 处理任务
-func (w *Worker) processTask(task *Task) {
+func (w *workerImpl) processTask(task types.Task) {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Printf("工作协程 %d 执行任务发生恐慌: %v", w.id, r)
-			if task.Result != nil {
-				// 修复字段名Data -> Result，并使用types包
-				task.Result <- &types.TaskResult{Result: nil, Error: r.(error)}
+			if taskResultChan, ok := task.(interface{ GetResultChan() chan *types.TaskResult }); ok {
+				taskResultChan.GetResultChan() <- &types.TaskResult{Result: nil, Error: r.(error)}
 			}
 		}
 	}()
 
 	// 模拟任务处理
 	resultData := []byte(fmt.Sprintf("任务处理完成 by worker %d", w.id))
-	if task.Result != nil {
-		// 修复字段名Data -> Result，并使用types包
-		task.Result <- &types.TaskResult{Result: resultData, Error: nil}
+	if taskResultChan, ok := task.(interface{ GetResultChan() chan *types.TaskResult }); ok {
+		taskResultChan.GetResultChan() <- &types.TaskResult{Result: resultData, Error: nil}
 	}
 }
 
-// WorkerPool 工作池
-type WorkerPool struct {
+// Submit 实现 types.Worker 接口的 Submit 方法
+func (w *workerImpl) Submit(task types.Task) chan types.TaskResult {
+	resultChan := make(chan types.TaskResult, 1)
+
+	go func() {
+		// 模拟任务处理
+		resultData := []byte(fmt.Sprintf("任务处理完成 by worker %d", w.id))
+		resultChan <- types.TaskResult{
+			TaskID: task.ID(),
+			Result: resultData,
+			Error:  nil,
+		}
+		close(resultChan)
+	}()
+
+	return resultChan
+}
+
+// workerPoolImpl 实现 types.WorkerPool 接口
+type workerPoolImpl struct {
 	workerCount int
-	workers     []*Worker
-	taskQueue   chan *Task // 将chan *TransportTask改为chan *Task
+	workers     []types.Worker
+	taskQueue   chan types.Task
 	quit        chan struct{}
 	running     bool
 	wg          sync.WaitGroup
@@ -98,8 +106,28 @@ type WorkerPool struct {
 	shutdown    bool
 }
 
+// NewWorkerPool 创建新的工作池
+func NewWorkerPool(workerCount, queueSize int) types.WorkerPool {
+	if workerCount <= 0 {
+		workerCount = 10 // 默认工作协程数
+	}
+	if queueSize <= 0 {
+		queueSize = 100 // 默认队列大小
+	}
+
+	return &workerPoolImpl{
+		workerCount: workerCount,
+		taskQueue:   make(chan types.Task, queueSize),
+		quit:        make(chan struct{}),
+		running:     false,
+		wg:          sync.WaitGroup{},
+		mu:          sync.Mutex{},
+		shutdown:    false,
+	}
+}
+
 // SetWorkerCount 设置工作协程数量
-func (wp *WorkerPool) SetWorkerCount(count int) {
+func (wp *workerPoolImpl) SetWorkerCount(count int) {
 	if count <= 0 {
 		return
 	}
@@ -116,32 +144,15 @@ func (wp *WorkerPool) SetWorkerCount(count int) {
 	log.Printf("工作池worker数量已更新为: %d", count)
 }
 
-// NewWorkerPool 创建新的工作池
-func NewWorkerPool(workerCount, queueSize int) *WorkerPool {
-	if workerCount <= 0 {
-		workerCount = 10 // 默认工作协程数
-	}
-	if queueSize <= 0 {
-		queueSize = 100 // 默认队列大小
-	}
-
-	return &WorkerPool{
-		workerCount: workerCount,
-		taskQueue:   make(chan *Task, queueSize), // 将*TransportTask改为*Task
-		quit:        make(chan struct{}),
-		running:     false,
-	}
-}
-
 // Start 启动工作池
-func (wp *WorkerPool) Start() {
+func (wp *workerPoolImpl) Start() {
 	if wp.running {
 		return
 	}
 	wp.running = true
 
 	// 创建工作协程
-	wp.workers = make([]*Worker, wp.workerCount)
+	wp.workers = make([]types.Worker, wp.workerCount)
 	for i := 0; i < wp.workerCount; i++ {
 		worker := NewWorker(i, wp)
 		wp.workers[i] = worker
@@ -154,7 +165,7 @@ func (wp *WorkerPool) Start() {
 }
 
 // Stop 停止工作池
-func (wp *WorkerPool) Stop() {
+func (wp *workerPoolImpl) Stop() {
 	if !wp.running {
 		return
 	}
@@ -174,17 +185,17 @@ func (wp *WorkerPool) Stop() {
 }
 
 // Submit 提交任务到工作池
-func (wp *WorkerPool) Submit(task types.Task) chan types.TaskResult {
+func (wp *workerPoolImpl) Submit(task types.Task) chan types.TaskResult {
 	resultChan := make(chan types.TaskResult, 1)
 
 	// 将types.Task转换为transport内部任务
-	transportTask := &Task{
+	transportTask := &TransportTask{
 		Ctx:    context.Background(),
-		Result: make(chan *types.TaskResult, 1), // 修改为types.TaskResult
+		Result: make(chan *types.TaskResult, 1),
 	}
 
-	// 修复：提交transportTask到工作池
-	err := wp.SubmitTransportTask(transportTask)
+	// 提交transportTask到工作池
+	err := wp.submitTransportTask(transportTask)
 	if err != nil {
 		resultChan <- types.TaskResult{
 			TaskID: task.ID(),
@@ -215,14 +226,14 @@ func (wp *WorkerPool) Submit(task types.Task) chan types.TaskResult {
 	return resultChan
 }
 
-// SubmitTransportTask 重命名原Submit方法，处理内部任务
-func (wp *WorkerPool) SubmitTransportTask(task *Task) error { // 将*TransportTask改为*Task
+// submitTransportTask 处理内部任务
+func (wp *workerPoolImpl) submitTransportTask(task *TransportTask) error {
 	if !wp.running {
 		return errors.New("工作池未运行")
 	}
 
 	select {
-	case wp.taskQueue <- task:
+	case wp.taskQueue <- &taskWrapper{task: task}:
 		return nil
 	case <-time.After(5 * time.Second):
 		return errors.New("任务提交超时")
@@ -231,13 +242,26 @@ func (wp *WorkerPool) SubmitTransportTask(task *Task) error { // 将*TransportTa
 	}
 }
 
+// taskWrapper 是 types.Task 接口的包装器
+type taskWrapper struct {
+	task *TransportTask
+}
+
+func (tw *taskWrapper) ID() string {
+	return "" // 这里需要根据实际情况实现
+}
+
+func (tw *taskWrapper) Execute() (interface{}, error) {
+	return nil, nil // 这里需要根据实际情况实现
+}
+
 // dispatch 分发任务到工作协程
-func (wp *WorkerPool) dispatch() {
+func (wp *workerPoolImpl) dispatch() {
 	defer wp.wg.Done()
 
 	for task := range wp.taskQueue {
 		// 找到一个空闲的工作协程
-		var worker *Worker
+		var worker types.Worker
 		for {
 			select {
 			case <-wp.quit:
@@ -253,28 +277,27 @@ func (wp *WorkerPool) dispatch() {
 	foundWorker:
 		// 将任务发送给工作协程
 		select {
-		case worker.taskQueue <- task:
+		case worker.(*workerImpl).taskQueue <- task:
 		case <-wp.quit:
 			return
 		case <-time.After(5 * time.Second):
 			log.Printf("任务分发超时")
-			if task.Result != nil {
-				// 修复字段名Data -> Result，并使用types包
-				task.Result <- &types.TaskResult{Result: nil, Error: errors.New("任务分发超时")}
+			if taskResultChan, ok := task.(interface{ GetResultChan() chan *types.TaskResult }); ok {
+				taskResultChan.GetResultChan() <- &types.TaskResult{Result: nil, Error: errors.New("任务分发超时")}
 			}
 		}
 	}
 }
 
 // 实现Shutdown方法
-func (p *WorkerPool) Shutdown() {
-	p.mu.Lock()
-	defer p.mu.Unlock()
+func (wp *workerPoolImpl) Shutdown() {
+	wp.mu.Lock()
+	defer wp.mu.Unlock()
 
-	if p.shutdown {
+	if wp.shutdown {
 		return
 	}
 
-	p.shutdown = true
-	p.Stop() // 调用现有的Stop方法
+	wp.shutdown = true
+	wp.Stop() // 调用现有的Stop方法
 }
