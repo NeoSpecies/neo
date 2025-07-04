@@ -329,9 +329,6 @@ func NewBasicConnectionPool(size int, createFn func() (net.Conn, error)) (*Basic
 	}, nil
 }
 
-// Callback 异步操作完成后的回调函数类型
-type Callback func(interface{}, error)
-
 // CallbackManager 管理连接相关事件的回调函数
 type CallbackManager struct {
 	callbacks sync.RWMutex
@@ -626,3 +623,7 @@ func NewMetrics(registry *prometheus.Registry) *Metrics {
 		Registry: registry,
 	}
 }
+
+// 回调函数类型定义
+// 确保此定义唯一存在，task_types.go中不应再有相同定义
+type Callback func(result interface{}, err error)
