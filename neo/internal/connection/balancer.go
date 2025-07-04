@@ -65,11 +65,12 @@ func NewRoundRobinBalancer(serviceName, methodName string, collector MetricsColl
 
 // Pick 轮询选择一个连接
 func (r *RoundRobinBalancer) Pick(availableConns []interface{}) (interface{}, error) {
-	if availableConns == nil || len(availableConns) == 0 {
-		r.mu.Lock()
-		defer r.mu.Unlock()
-		availableConns = r.connections
-	}
+    // 原代码：if availableConns == nil || len(availableConns) == 0 {
+    if len(availableConns) == 0 {
+        r.mu.Lock()
+        defer r.mu.Unlock()
+        availableConns = r.connections
+    }
 
 	if len(availableConns) == 0 {
 		err := errors.New("没有可用连接")
@@ -179,7 +180,7 @@ func NewBalancer(strategy types.LoadBalanceStrategy, serviceName, methodName str
 // WeightedBalancer 加权负载均衡器
 type WeightedBalancer struct {
 	// 实现加权负载均衡逻辑
-	connections []*types.Connection
+	// 原代码：connections []*types.Connection
 	index       int
 	mu          sync.Mutex
 }
