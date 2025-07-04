@@ -12,98 +12,14 @@ import (
 	"neo/internal/types"
 )
 
-// 本地WorkerPoolAdapter实现，避免在非本地类型上定义方法
-type WorkerPoolAdapter struct {
-	WorkerPool *WorkerPool
-}
-
-// Submit 实现types.WorkerPool接口的Submit方法
-func (a *WorkerPoolAdapter) Submit(task types.Task) chan types.TaskResult {
-	resultChan := make(chan types.TaskResult, 1)
-
-	// 创建transport.Task实例
-	transportTask := &Task{
-		Ctx:    context.Background(),
-		Result: make(chan *TaskResult, 1),
-	}
-
-	// 启动goroutine执行任务
-	go func() {
-		defer close(transportTask.Result)
-		// 执行types.Task的Execute方法
-		result, err := task.Execute()
-		// 将结果转换为[]byte（根据实际情况调整转换逻辑）
-		var data []byte
-		if result != nil {
-			if b, ok := result.([]byte); ok {
-				data = b
-			} else {
-				data = []byte(fmt.Sprintf("%v", result))
-			}
-		}
-		transportTask.Result <- &TaskResult{
-			Data:  data,
-			Error: err,
-		}
-	}()
-
-	// 提交到工作池
-	if err := a.WorkerPool.SubmitTransportTask(transportTask); err != nil {
-		resultChan <- types.TaskResult{
-			TaskID: task.ID(),
-			Error:  fmt.Errorf("任务提交失败: %w", err),
-		}
-		close(resultChan)
-		return resultChan
-	}
-
-	// 启动goroutine等待结果
-	go func() {
-		defer close(resultChan)
-		select {
-		case res := <-transportTask.Result:
-			resultChan <- types.TaskResult{
-				TaskID: task.ID(),
-				Result: res.Data,
-				Error:  res.Error,
-			}
-		case <-transportTask.Ctx.Done():
-			resultChan <- types.TaskResult{
-				TaskID: task.ID(),
-				Error:  transportTask.Ctx.Err(),
-			}
-		}
-	}()
-
-	return resultChan
-}
-
-// Start 启动工作池
-func (a *WorkerPoolAdapter) Start() {
-	a.WorkerPool.Start()
-}
-
-// Stop 实现types.WorkerPool接口的Stop方法
-func (a *WorkerPoolAdapter) Stop() {
-	a.WorkerPool.Stop()
-}
-
-// SetWorkerCount 实现types.WorkerPool接口的SetWorkerCount方法
-func (a *WorkerPoolAdapter) SetWorkerCount(count int) {
-	a.WorkerPool.SetWorkerCount(count)
-}
-
-// Shutdown 实现types.WorkerPool接口的Shutdown方法
-func (a *WorkerPoolAdapter) Shutdown() {
-	a.WorkerPool.Shutdown()
-}
+// 删除原WorkerPoolAdapter定义
 
 // IPCServer 本地IPC服务器实现
 type IPCServer struct {
 	config          types.IPCServerConfig
 	tcpServer       types.Server
-	serviceRegistry *ServiceRegistry
-	workerPool      *WorkerPoolAdapter // 修改为具体类型而非接口
+	serviceRegistry *types.ServiceRegistry
+	workerPool      *types.WorkerPoolAdapter
 	metrics         *types.Metrics
 	ctx             context.Context
 	cancel          context.CancelFunc
@@ -120,7 +36,7 @@ func (s *IPCServer) RegisterService(serviceName string, handler types.ServiceHan
 // 创建新的IPC服务器
 func NewIPCServer(config types.IPCServerConfig) (*IPCServer, error) {
 	// 初始化服务注册表
-	serviceRegistry := NewServiceRegistry()
+	serviceRegistry := types.NewServiceRegistry() // 使用types包的ServiceRegistry
 
 	// 初始化工作池
 	workerPool := NewWorkerPool(
@@ -129,7 +45,7 @@ func NewIPCServer(config types.IPCServerConfig) (*IPCServer, error) {
 	)
 
 	// 创建工作池适配器
-	workerPoolAdaptor := &WorkerPoolAdapter{
+	workerPoolAdaptor := &types.WorkerPoolAdapter{ // 使用types包的WorkerPoolAdapter
 		WorkerPool: workerPool,
 	}
 
@@ -158,11 +74,11 @@ func NewIPCServer(config types.IPCServerConfig) (*IPCServer, error) {
 }
 
 // 添加TCP服务器工厂方法
-func createTCPServer(config *types.TCPConfig, registry *ServiceRegistry, workerPool types.WorkerPool) (types.Server, error) {
+func createTCPServer(config *types.TCPConfig, registry *types.ServiceRegistry, workerPool types.WorkerPool) (types.Server, error) { // registry改为*types.ServiceRegistry
 	// 创建消息回调函数
 	callback := func(data []byte) ([]byte, error) {
 		// 实现消息处理逻辑
-		return ipcprotocol.ProcessMessage(data, registry, workerPool)
+		return ipcprotocol.ProcessMessage(data, *registry, workerPool)
 	}
 	return tcp.NewServer(config, callback)
 }

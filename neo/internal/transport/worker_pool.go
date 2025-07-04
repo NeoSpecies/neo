@@ -8,20 +8,21 @@ import (
 	"sync"
 	"time"
 
-	"neo/internal/types" // 确保导入types包
+	"neo/internal/types"
 )
 
-// Task 表示工作池中的任务
-type Task struct {
+// SubmitTransportTask 提交内部任务
+type TransportTask struct {
 	Ctx    context.Context
-	Result chan *TaskResult
-	// 可以添加更多任务相关字段
+	Result chan *types.TaskResult
 }
 
-// TaskResult 表示任务执行结果
-type TaskResult struct {
-	Data  []byte
-	Error error
+// 保留所有方法实现，但更新类型引用...
+// 可以添加更多任务相关字段
+type Task struct {
+	Ctx    context.Context
+	Result chan *types.TaskResult
+	// 可以添加更多任务相关字段
 }
 
 // Worker 工作协程
@@ -71,7 +72,8 @@ func (w *Worker) processTask(task *Task) {
 		if r := recover(); r != nil {
 			log.Printf("工作协程 %d 执行任务发生恐慌: %v", w.id, r)
 			if task.Result != nil {
-				task.Result <- &TaskResult{Error: r.(error)}
+				// 修复字段名Data -> Result，并使用types包
+				task.Result <- &types.TaskResult{Result: nil, Error: r.(error)}
 			}
 		}
 	}()
@@ -79,7 +81,8 @@ func (w *Worker) processTask(task *Task) {
 	// 模拟任务处理
 	resultData := []byte(fmt.Sprintf("任务处理完成 by worker %d", w.id))
 	if task.Result != nil {
-		task.Result <- &TaskResult{Data: resultData}
+		// 修复字段名Data -> Result，并使用types包
+		task.Result <- &types.TaskResult{Result: resultData, Error: nil}
 	}
 }
 
@@ -87,12 +90,12 @@ func (w *Worker) processTask(task *Task) {
 type WorkerPool struct {
 	workerCount int
 	workers     []*Worker
-	taskQueue   chan *Task
+	taskQueue   chan *Task // 将chan *TransportTask改为chan *Task
 	quit        chan struct{}
 	running     bool
 	wg          sync.WaitGroup
-	mu          sync.Mutex // 新增：互斥锁
-	shutdown    bool       // 新增：关闭标志
+	mu          sync.Mutex
+	shutdown    bool
 }
 
 // SetWorkerCount 设置工作协程数量
@@ -124,7 +127,7 @@ func NewWorkerPool(workerCount, queueSize int) *WorkerPool {
 
 	return &WorkerPool{
 		workerCount: workerCount,
-		taskQueue:   make(chan *Task, queueSize),
+		taskQueue:   make(chan *Task, queueSize), // 将*TransportTask改为*Task
 		quit:        make(chan struct{}),
 		running:     false,
 	}
@@ -171,14 +174,13 @@ func (wp *WorkerPool) Stop() {
 }
 
 // Submit 提交任务到工作池
-// Submit 实现types.WorkerPool接口的Submit方法
 func (wp *WorkerPool) Submit(task types.Task) chan types.TaskResult {
 	resultChan := make(chan types.TaskResult, 1)
 
 	// 将types.Task转换为transport内部任务
 	transportTask := &Task{
 		Ctx:    context.Background(),
-		Result: make(chan *TaskResult, 1),
+		Result: make(chan *types.TaskResult, 1), // 修改为types.TaskResult
 	}
 
 	// 修复：提交transportTask到工作池
@@ -199,7 +201,7 @@ func (wp *WorkerPool) Submit(task types.Task) chan types.TaskResult {
 		case res := <-transportTask.Result:
 			resultChan <- types.TaskResult{
 				TaskID: task.ID(),
-				Result: res.Data,
+				Result: res.Result,
 				Error:  res.Error,
 			}
 		case <-wp.quit:
@@ -214,7 +216,7 @@ func (wp *WorkerPool) Submit(task types.Task) chan types.TaskResult {
 }
 
 // SubmitTransportTask 重命名原Submit方法，处理内部任务
-func (wp *WorkerPool) SubmitTransportTask(task *Task) error {
+func (wp *WorkerPool) SubmitTransportTask(task *Task) error { // 将*TransportTask改为*Task
 	if !wp.running {
 		return errors.New("工作池未运行")
 	}
@@ -257,7 +259,8 @@ func (wp *WorkerPool) dispatch() {
 		case <-time.After(5 * time.Second):
 			log.Printf("任务分发超时")
 			if task.Result != nil {
-				task.Result <- &TaskResult{Error: errors.New("任务分发超时")}
+				// 修复字段名Data -> Result，并使用types包
+				task.Result <- &types.TaskResult{Result: nil, Error: errors.New("任务分发超时")}
 			}
 		}
 	}

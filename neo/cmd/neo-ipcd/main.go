@@ -29,7 +29,7 @@ func main() {
 	}
 
 	// 初始化服务注册和工作池
-	serviceRegistry := transport.NewServiceRegistry()
+	serviceRegistry := types.NewServiceRegistry()
 	workerPool := transport.NewWorkerPool(
 		globalConfig.IPC.WorkerCount,
 		globalConfig.IPC.WorkerCount*2, // 队列容量
@@ -92,7 +92,7 @@ func main() {
 		}
 
 		// 原有处理逻辑
-		respData, err := ipcprotocol.ProcessMessage(data, serviceRegistry, adaptedWorkerPool)
+		respData, err := ipcprotocol.ProcessMessage(data, *serviceRegistry, adaptedWorkerPool)
 		if err != nil {
 			return nil, err
 		}
