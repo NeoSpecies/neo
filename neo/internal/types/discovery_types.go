@@ -81,3 +81,9 @@ type Message struct {
 	Response []*Service
 	Error    string
 }
+
+// ServiceEvent 服务事件
+type ServiceEvent struct {
+	Type    EventType // 事件类型（注册/注销）
+	Service *Service  // 涉及的服务实例
+}

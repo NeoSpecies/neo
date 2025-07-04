@@ -63,7 +63,7 @@ func (a *WorkerPoolAdapter) Submit(task Task) chan TaskResult {
 	if err := a.WorkerPool.Submit(transportTask); err != nil {
 		resultChan <- TaskResult{
 			TaskID: task.ID(),
-			Error:  fmt.Errorf("任务提交失败: %w", err),
+			Error:  fmt.Errorf("任务提交失败: %v", err),
 		}
 		close(resultChan)
 		return resultChan
