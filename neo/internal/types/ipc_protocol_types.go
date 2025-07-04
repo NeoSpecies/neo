@@ -1,38 +1,29 @@
-package ipcprotocol
+// neo/neo/internal/types/ipc_protocol_types.go
+package types
 
 import (
 	"encoding/json"
-	"neo/internal/types"
 	"time"
 )
 
-// 消息类型定义
-const (
-	MessageTypeRequest  = "request"
-	MessageTypeResponse = "response"
-	MessageTypeError    = "error"
-	MessageTypeEvent    = "event"
-)
-
 // 创建新请求
-func NewRequest(service, method string, params interface{}) (*types.Request, error) {
+func NewRequest(service, method string, params interface{}) (*Request, error) {
 	paramsJSON, err := json.Marshal(params)
 	if err != nil {
 		return nil, err
 	}
 
-	return &types.Request{
-			RequestID: NewRequestID(),
-			Service:   service,
-			Method:    method,
-			Params:    paramsJSON,
-			Timestamp: time.Now().UnixMilli(),
-		},
-		nil
+	return &Request{
+		RequestID: NewRequestID(),
+		Service:   service,
+		Method:    method,
+		Params:    paramsJSON,
+		Timestamp: time.Now().UnixMilli(),
+	}, nil
 }
 
 // 创建新响应
-func NewResponse(requestID string, data interface{}) (*types.Response, error) {
+func NewResponse(requestID string, data interface{}) (*Response, error) {
 	var dataJSON json.RawMessage
 	if data != nil {
 		jsonData, err := json.Marshal(data)
@@ -42,18 +33,17 @@ func NewResponse(requestID string, data interface{}) (*types.Response, error) {
 		dataJSON = json.RawMessage(jsonData)
 	}
 
-	return &types.Response{
-			RequestID: requestID,
-			Code:      types.ErrorCodeSuccess,
-			Data:      dataJSON,
-			Timestamp: time.Now().UnixMilli(),
-		},
-		nil
+	return &Response{
+		RequestID: requestID,
+		Code:      ErrorCodeSuccess,
+		Data:      dataJSON,
+		Timestamp: time.Now().UnixMilli(),
+	}, nil
 }
 
 // 创建错误响应
-func NewErrorResponse(requestID string, code types.ErrorCode, message string) *types.Response {
-	return &types.Response{
+func NewErrorResponse(requestID string, code ErrorCode, message string) *Response {
+	return &Response{
 		RequestID: requestID,
 		Code:      code,
 		Message:   message,
@@ -62,27 +52,28 @@ func NewErrorResponse(requestID string, code types.ErrorCode, message string) *t
 }
 
 // ProcessMessage 处理IPC消息
-func ProcessMessage(data []byte, registry *types.ServiceRegistry, workerPool types.WorkerPool) ([]byte, error) {
+// 修改函数参数为指针类型
+func ProcessMessage(data []byte, registry *ServiceRegistry, workerPool WorkerPool) ([]byte, error) {
 	// 解析消息帧
-	var frame types.MessageFrame
+	var frame MessageFrame
 	if err := json.Unmarshal(data, &frame); err != nil {
-		resp := NewErrorResponse("", types.ErrorCodeInvalidRequest, "Invalid message format")
+		resp := NewErrorResponse("", ErrorCodeInvalidRequest, "Invalid message format")
 		return marshalResponse(resp)
 	}
 
 	// 处理请求类型消息
 	if frame.Type == MessageTypeRequest {
-		var req types.Request
+		var req Request
 		if err := json.Unmarshal(frame.Payload, &req); err != nil {
-			resp := NewErrorResponse("", types.ErrorCodeInvalidRequest, "Invalid request payload")
+			resp := NewErrorResponse("", ErrorCodeInvalidRequest, "Invalid request payload")
 			return marshalResponse(resp)
 		}
 
 		// 提交任务到工作池处理
-		task := &types.IPCTask{
+		task := &IPCTask{
 			TaskID:   req.RequestID,
 			Req:      &req,
-			Registry: registry,
+			Registry: registry, // 修改为指针类型
 		}
 
 		// 提交任务并获取结果通道
@@ -92,32 +83,32 @@ func ProcessMessage(data []byte, registry *types.ServiceRegistry, workerPool typ
 		select {
 		case result := <-resultChan:
 			if result.Error != nil {
-				resp := NewErrorResponse(req.RequestID, types.ErrorCodeInternalError, result.Error.Error())
+				resp := NewErrorResponse(req.RequestID, ErrorCodeInternalError, result.Error.Error())
 				return marshalResponse(resp)
 			}
 
 			// 将结果转换为Response类型
-			response, ok := result.Result.(*types.Response)
+			response, ok := result.Result.(*Response)
 			if !ok {
-				resp := NewErrorResponse(req.RequestID, types.ErrorCodeInternalError, "invalid response type")
+				resp := NewErrorResponse(req.RequestID, ErrorCodeInternalError, "invalid response type")
 				return marshalResponse(resp)
 			}
 			return marshalResponse(response)
 
 		case <-time.After(time.Duration(req.Timeout) * time.Millisecond):
-			resp := NewErrorResponse(req.RequestID, types.ErrorCodeTimeout, "Request timeout")
+			resp := NewErrorResponse(req.RequestID, ErrorCodeTimeout, "Request timeout")
 			return marshalResponse(resp)
 		}
 	}
 
 	// 未知消息类型
-	resp := NewErrorResponse("", types.ErrorCodeInvalidRequest, "Unknown message type")
+	resp := NewErrorResponse("", ErrorCodeInvalidRequest, "Unknown message type")
 	return marshalResponse(resp)
 }
 
 // 辅助函数：序列化响应
-func marshalResponse(resp *types.Response) ([]byte, error) {
-	frame := types.MessageFrame{
+func marshalResponse(resp *Response) ([]byte, error) {
+	frame := MessageFrame{
 		Type:    MessageTypeResponse,
 		Payload: []byte(json.RawMessage(resp.Data)),
 	}

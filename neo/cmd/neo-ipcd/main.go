@@ -92,7 +92,7 @@ func main() {
 		}
 
 		// 原有处理逻辑
-		respData, err := ipcprotocol.ProcessMessage(data, *serviceRegistry, adaptedWorkerPool)
+		respData, err := ipcprotocol.ProcessMessage(data, serviceRegistry, adaptedWorkerPool)
 		if err != nil {
 			return nil, err
 		}

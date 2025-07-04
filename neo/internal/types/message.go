@@ -57,7 +57,7 @@ type MessageFrame struct {
 type IPCTask struct {
 	TaskID   string
 	Req      *Request
-	Registry ServiceRegistry
+	Registry *ServiceRegistry
 }
 
 // ID 返回任务ID，实现Task接口

@@ -8,7 +8,7 @@ import (
 
 	"neo/internal/connection"
 	"neo/internal/ipcprotocol"
-	"neo/internal/types" // 替换原 connection 包导入
+	"neo/internal/types"
 )
 
 // ConnectionHandler 处理TCP连接的生命周期和消息流转

@@ -78,7 +78,7 @@ func createTCPServer(config *types.TCPConfig, registry *types.ServiceRegistry, w
 	// 创建消息回调函数
 	callback := func(data []byte) ([]byte, error) {
 		// 实现消息处理逻辑
-		return ipcprotocol.ProcessMessage(data, *registry, workerPool)
+		return ipcprotocol.ProcessMessage(data, registry, workerPool) // 移除*解引用操作符
 	}
 	return tcp.NewServer(config, callback)
 }
