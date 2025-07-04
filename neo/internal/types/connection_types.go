@@ -3,6 +3,7 @@ package types
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -42,7 +43,7 @@ type Config struct {
 	HealthCheckInterval time.Duration       // 健康检查间隔
 	MaxErrorCount       int                 // 最大错误次数
 	MaxLatency          time.Duration       // 最大延迟阈值
-	LoadBalance         LoadBalanceStrategy // 负载均衡策略
+	LoadBalance         LoadBalanceStrategy // 负载均衡策略（修改此行）
 	MaxRetryCount       int                 // 连接创建最大重试次数
 	RetryInterval       time.Duration       // 连接重试间隔
 }
@@ -67,26 +68,7 @@ type Connection struct {
 	Closed     bool               // 是否已关闭
 }
 
-// Balancer 负载均衡器接口
-type Balancer interface {
-	// Select 从连接列表中选择一个合适的连接
-	Select(connections []*Connection) (*Connection, error)
-	// Pick 选择一个连接
-	Pick(availableConns []interface{}) (interface{}, error)
-	// Release 释放连接
-	Release(conn interface{}, err error)
-	// Add 添加连接
-	Add(conn interface{})
-	// Remove 移除连接
-	Remove(conn interface{})
-	// Len 获取连接数量
-	Len() int
-	// Close 关闭负载均衡器
-	Close()
-}
-
 // TCPConnectionPool 连接池结构体
-// 修改TCPConnectionPool结构体中的Metrics字段引用
 type TCPConnectionPool struct {
 	MaxSize           int                      `json:"max_size"`
 	MinSize           int                      `json:"min_size"`
@@ -103,16 +85,6 @@ type TCPConnectionPool struct {
 	Mu                *sync.RWMutex            `json:"-"` // 修改为RWMutex
 	Closed            bool                     `json:"closed"`
 }
-
-// 负载均衡策略常量
-type LoadBalanceStrategy string
-
-const (
-	LoadBalanceRoundRobin       LoadBalanceStrategy = "round_robin"
-	LoadBalanceWeighted         LoadBalanceStrategy = "weighted"
-	LoadBalanceLeastConnections LoadBalanceStrategy = "least_connections"
-	LoadBalanceSourceIP         LoadBalanceStrategy = "source_ip"
-)
 
 // ConnectionPoolMetrics 连接池指标
 type ConnectionPoolMetrics struct {
@@ -151,6 +123,7 @@ type LatencyStats struct {
 	samples    []float64 // 最近的样本
 	currentPos int       // 当前样本位置
 }
+type MessageCallback func([]byte) ([]byte, error)
 
 // NewLatencyStats 创建延迟统计
 func NewLatencyStats() *LatencyStats {
@@ -353,24 +326,6 @@ func NewTCPConnectionPool(addr string, maxConnections int) *TCPConnectionPool {
 	}
 }
 
-// MetricsCollector 指标收集器接口
-// 扩展接口以包含连接更新方法
-type MetricsCollector interface {
-	CollectRequest(ctx context.Context, serviceName, method string) time.Time
-	CollectResponse(ctx context.Context, serviceName, method string, startTime time.Time, err error)
-	UpdateConnections(serviceName string, active, idle, total int)
-}
-
-// RoundRobinBalancer 轮询负载均衡器
-type RoundRobinBalancer struct {
-	connections      []interface{}
-	index            int
-	mu               sync.Mutex
-	serviceName      string
-	methodName       string
-	metricsCollector MetricsCollector
-}
-
 // NewRoundRobinBalancer 创建新的轮询负载均衡器
 func NewRoundRobinBalancer(serviceName, methodName string, collector MetricsCollector) *RoundRobinBalancer {
 	return &RoundRobinBalancer{
@@ -496,6 +451,7 @@ func (r *RoundRobinBalancer) Select(connections []*Connection) (*Connection, err
 	if len(connections) == 0 {
 		err := errors.New("没有可用连接")
 		if r.metricsCollector != nil {
+			// 使用metricsCollector代替metrics.Default
 			ctx := context.Background()
 			startTime := time.Now()
 			r.metricsCollector.CollectResponse(ctx, r.serviceName, r.methodName, startTime, err)
@@ -504,10 +460,10 @@ func (r *RoundRobinBalancer) Select(connections []*Connection) (*Connection, err
 	}
 
 	// 轮询选择连接
-	(r.mu).Lock()
+	r.mu.Lock()
 	conn := connections[r.index]
 	r.index = (r.index + 1) % len(connections)
-	(r.mu).Unlock()
+	r.mu.Unlock()
 
 	return conn, nil
 }
@@ -529,3 +485,176 @@ func NewMetrics(registry *prometheus.Registry) *Metrics {
 // 回调函数类型定义
 // 确保此定义唯一存在，task_types.go中不应再有相同定义
 type Callback func(result interface{}, err error)
+
+// ConnectionHandler TCP连接处理器
+type ConnectionHandler struct {
+	Config         *Config            // 导出字段
+	ConnectionPool *TCPConnectionPool // 导出字段
+}
+
+// HandleConnection 处理新建立的TCP连接
+func (h *ConnectionHandler) HandleConnection(conn net.Conn) error {
+	// 将net.Conn转换为*net.TCPConn以访问TCP特定方法
+	tcpConn, ok := conn.(*net.TCPConn)
+	if !ok {
+		return fmt.Errorf("无效的连接类型，期望*net.TCPConn")
+	}
+
+	// 配置TCP连接参数
+	if h.Config.ConnectTimeout > 0 {
+		bufferSize := int(h.Config.ConnectTimeout.Milliseconds())
+		if bufferSize > 0 {
+			if err := tcpConn.SetReadBuffer(bufferSize); err != nil {
+				log.Printf("设置读取缓冲区大小失败: %v", err)
+			}
+			if err := tcpConn.SetWriteBuffer(bufferSize); err != nil {
+				log.Printf("设置写入缓冲区大小失败: %v", err)
+			}
+		}
+	}
+
+	// 设置TCP保持连接
+	if err := tcpConn.SetKeepAlive(true); err != nil {
+		log.Printf("设置TCP保持连接失败: %v", err)
+	} else {
+		// 设置保持连接间隔
+		if h.Config.KeepAliveInterval > 0 {
+			if err := tcpConn.SetKeepAlivePeriod(h.Config.KeepAliveInterval); err != nil {
+				log.Printf("设置TCP保持连接间隔失败: %v", err)
+			}
+		}
+	}
+
+	// 设置连接超时
+	if h.Config.IdleTimeout > 0 {
+		if err := conn.SetReadDeadline(time.Now().Add(h.Config.IdleTimeout)); err != nil {
+			return fmt.Errorf("设置读超时失败: %v", err)
+		}
+	}
+
+	if h.Config.IdleTimeout > 0 {
+		if err := conn.SetWriteDeadline(time.Now().Add(h.Config.IdleTimeout)); err != nil {
+			return fmt.Errorf("设置写超时失败: %v", err)
+		}
+	}
+
+	// 创建带统计功能的连接 - 使用连接池的Connection类型
+	// 从连接池获取一个连接包装器
+	// 将 connection.Acquire 改为直接调用池的方法
+	poolConn, err := h.ConnectionPool.Acquire()
+	if err != nil {
+		return fmt.Errorf("创建连接池连接失败: %v", err)
+	}
+	// 将原始连接替换为配置好的TCP连接
+	poolConn.Conn = tcpConn
+	poolConn.Stats = NewConnectionStats() // 修改为使用types包的构造函数
+
+	// 添加到连接池 - 将 connection.Release 改为直接调用池的方法
+	poolConn.Release(nil)
+	defer func() {
+		// 从连接池移除并关闭连接
+		conn.Close()
+	}()
+
+	// 消息处理循环
+	codec := NewCodec(conn, conn)
+	for {
+		// 读取消息
+		msgFrame, err := codec.ReadIPCMessage()
+		if err != nil {
+			// 检查是否为超时错误
+			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+				// 超时错误处理 - 继续等待新数据
+				continue
+			}
+			return h.handleConnectionError(err)
+		}
+
+		// 成功读取后重置读超时
+		if h.Config.IdleTimeout > 0 {
+			if readErr := conn.SetReadDeadline(time.Now().Add(h.Config.IdleTimeout)); readErr != nil {
+				return fmt.Errorf("重置读超时失败: %v", readErr)
+			}
+		}
+
+		// 处理消息
+		responseFrame, err := h.processMessageFrame(msgFrame)
+		if err != nil {
+			return h.handleConnectionError(err)
+		}
+
+		// 发送响应（如果有）
+		if responseFrame != nil {
+			if err := codec.WriteIPCMessage(responseFrame); err != nil {
+				return h.handleConnectionError(err)
+			}
+		}
+	}
+}
+
+// processMessageFrame 处理接收到的消息帧
+func (h *ConnectionHandler) processMessageFrame(frame *MessageFrame) (*MessageFrame, error) {
+	// 实现消息处理逻辑
+	return &MessageFrame{
+		Type:    string(MessageTypeResponse), // 显式转换为string
+		Payload: []byte("已处理: " + string(frame.Payload)),
+	}, nil
+}
+
+// handleConnectionError 处理连接错误
+func (h *ConnectionHandler) handleConnectionError(err error) error {
+	log.Printf("连接错误: %v", err)
+	return fmt.Errorf("连接错误: %v", err)
+}
+
+// 添加Acquire方法到TCPConnectionPool
+func (p *TCPConnectionPool) Acquire() (*Connection, error) {
+	if p.Closed {
+		return nil, ErrPoolClosed
+	}
+
+	for {
+		p.Mu.RLock()
+		defer p.Mu.RUnlock()
+
+		// 使用负载均衡器选择连接
+		if p.Balancer != nil {
+			availableConns := make([]interface{}, len(p.Connections))
+			for i, conn := range p.Connections {
+				availableConns[i] = conn
+			}
+			result, err := p.Balancer.Pick(availableConns)
+			if err != nil {
+				return nil, err
+			}
+			conn, ok := result.(*Connection)
+			if !ok {
+				return nil, errors.New("invalid connection type returned by balancer")
+			}
+			return conn, nil
+		}
+
+		// 无负载均衡器时的连接选择逻辑
+		for _, conn := range p.Connections {
+			if !conn.InUse && !conn.Closed && time.Since(conn.LastUsed) < p.IdleTimeout {
+				conn.InUse = true
+				return conn, nil
+			}
+		}
+
+		return nil, ErrPoolExhausted
+	}
+}
+
+// 添加Release方法到Connection
+func (c *Connection) Release(err error) {
+	if c.Pool.Closed {
+		c.Conn.Close()
+		return
+	}
+
+	// 释放连接逻辑（从原connection.Release迁移）
+	c.LastUsed = time.Now()
+	c.InUse = false
+	// ... 原有释放连接逻辑 ...
+}

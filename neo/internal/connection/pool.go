@@ -162,7 +162,21 @@ func getAvailableConnection(pool *types.TCPConnectionPool) (*types.Connection, e
 
 	// 使用负载均衡器选择连接
 	if pool.Balancer != nil {
-		return pool.Balancer.Select(pool.Connections)
+		// 将 []*types.Connection 转换为 []interface{}
+		availableConns := make([]interface{}, len(pool.Connections))
+		for i, conn := range pool.Connections {
+			availableConns[i] = conn
+		}
+		// 修复类型断言问题
+		result, err := pool.Balancer.Pick(availableConns)
+		if err != nil {
+			return nil, err
+		}
+		conn, ok := result.(*types.Connection)
+		if !ok {
+			return nil, errors.New("invalid connection type returned by balancer")
+		}
+		return conn, nil
 	}
 
 	// 如果没有负载均衡器，简单返回第一个可用连接

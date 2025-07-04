@@ -62,7 +62,7 @@ func ProcessMessage(data []byte, registry *ServiceRegistry, workerPool WorkerPoo
 	}
 
 	// 处理请求类型消息
-	if frame.Type == MessageTypeRequest {
+	if frame.Type == string(MessageTypeRequest) {
 		var req Request
 		if err := json.Unmarshal(frame.Payload, &req); err != nil {
 			resp := NewErrorResponse("", ErrorCodeInvalidRequest, "Invalid request payload")
@@ -109,7 +109,7 @@ func ProcessMessage(data []byte, registry *ServiceRegistry, workerPool WorkerPoo
 // 辅助函数：序列化响应
 func marshalResponse(resp *Response) ([]byte, error) {
 	frame := MessageFrame{
-		Type:    MessageTypeResponse,
+		Type:    string(MessageTypeResponse),
 		Payload: []byte(json.RawMessage(resp.Data)),
 	}
 	return json.Marshal(frame)

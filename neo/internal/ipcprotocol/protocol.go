@@ -6,14 +6,6 @@ import (
 	"time"
 )
 
-// 消息类型定义
-const (
-	MessageTypeRequest  = "request"
-	MessageTypeResponse = "response"
-	MessageTypeError    = "error"
-	MessageTypeEvent    = "event"
-)
-
 // 创建新请求
 func NewRequest(service, method string, params interface{}) (*types.Request, error) {
 	paramsJSON, err := json.Marshal(params)
@@ -71,7 +63,7 @@ func ProcessMessage(data []byte, registry *types.ServiceRegistry, workerPool typ
 	}
 
 	// 处理请求类型消息
-	if frame.Type == MessageTypeRequest {
+	if frame.Type == string(types.MessageTypeRequest) {
 		var req types.Request
 		if err := json.Unmarshal(frame.Payload, &req); err != nil {
 			resp := NewErrorResponse("", types.ErrorCodeInvalidRequest, "Invalid request payload")
@@ -117,11 +109,11 @@ func ProcessMessage(data []byte, registry *types.ServiceRegistry, workerPool typ
 
 // 辅助函数：序列化响应
 func marshalResponse(resp *types.Response) ([]byte, error) {
-	frame := types.MessageFrame{
-		Type:    MessageTypeResponse,
+	responseFrame := &types.MessageFrame{
+		Type:    string(types.MessageTypeResponse),
 		Payload: []byte(json.RawMessage(resp.Data)),
 	}
-	return json.Marshal(frame)
+	return json.Marshal(responseFrame)
 }
 
 // NewRequestID 生成请求ID

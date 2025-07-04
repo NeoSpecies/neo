@@ -3,6 +3,7 @@ package types
 import (
 	"bytes"
 	"compress/gzip"
+
 	"github.com/klauspost/compress/zstd"
 	"github.com/pierrec/lz4"
 )

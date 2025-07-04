@@ -12,8 +12,10 @@ import (
 	"neo/internal/metrics"
 	"neo/internal/transport"
 	"neo/internal/types"
+	"net"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 
 	"github.com/mitchellh/mapstructure"
@@ -37,6 +39,7 @@ func main() {
 	// 使用types包中的WorkerPoolAdapter
 	adaptedWorkerPool := &types.WorkerPoolAdapter{WorkerPool: workerPool}
 
+	// 初始化服务器配置
 	serverConfig := &types.TCPConfig{
 		MaxConnections:    globalConfig.IPC.MaxConnections,
 		MaxMsgSize:        globalConfig.Protocol.MaxMessageSize,
@@ -44,6 +47,8 @@ func main() {
 		WriteTimeout:      globalConfig.IPC.WriteTimeout,
 		WorkerCount:       globalConfig.IPC.WorkerCount,
 		ConnectionTimeout: globalConfig.IPC.ConnectionTimeout,
+		// 直接设置地址，避免在TCPConfig内部依赖config包
+		Address: net.JoinHostPort(globalConfig.IPC.Host, strconv.Itoa(globalConfig.IPC.Port)),
 	}
 
 	messageHandler := func(data []byte) ([]byte, error) {

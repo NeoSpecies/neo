@@ -74,7 +74,7 @@ func NewIPCServer(config types.IPCServerConfig) (*IPCServer, error) {
 }
 
 // 添加TCP服务器工厂方法
-func createTCPServer(config *types.TCPConfig, registry *types.ServiceRegistry, workerPool types.WorkerPool) (types.Server, error) { // registry改为*types.ServiceRegistry
+func createTCPServer(config *types.TCPConfig, registry *types.ServiceRegistry, workerPool types.WorkerPool) (types.Server, error) {  // 更新参数类型
 	// 创建消息回调函数
 	callback := func(data []byte) ([]byte, error) {
 		// 实现消息处理逻辑
@@ -132,4 +132,11 @@ func (s *IPCServer) Stop() error {
 
 	s.started = false
 	return nil
+}
+
+// IPC服务器配置
+type IPCServerConfig struct {
+    TCPConfig       types.TCPConfig  // 更新引用
+    WorkerPoolSize  int
+    WorkerQueueSize int
 }

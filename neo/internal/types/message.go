@@ -37,12 +37,14 @@ const (
 	ErrorCodePermissionDenied ErrorCode = "PERMISSION_DENIED"
 )
 
+type MessageType string
+
 // 消息类型定义
 const (
-	MessageTypeRequest  = "request"
-	MessageTypeResponse = "response"
-	MessageTypeError    = "error"
-	MessageTypeEvent    = "event"
+	MessageTypeRequest  MessageType = "request"
+	MessageTypeResponse MessageType = "response"
+	MessageTypeError    MessageType = "error"
+	MessageTypeEvent    MessageType = "event"
 )
 
 // 消息帧结构

@@ -64,16 +64,6 @@ func NewDiscovery(storage Storage) *Discovery {
 	}
 }
 
-// MessageType 服务发现消息类型
-type MessageType int
-
-const (
-	MessageRegister MessageType = iota
-	MessageDeregister
-	MessageDiscover
-	MessageHeartbeat
-)
-
 // Message 服务发现协议消息
 type Message struct {
 	Type     MessageType
