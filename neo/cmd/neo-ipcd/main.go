@@ -17,8 +17,8 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
-	"syscall"
 	"sync"
+	"syscall"
 
 	"github.com/mitchellh/mapstructure"
 )
@@ -48,7 +48,7 @@ func main() {
 		WriteTimeout:      globalConfig.IPC.WriteTimeout,
 		WorkerCount:       globalConfig.IPC.WorkerCount,
 		ConnectionTimeout: globalConfig.IPC.ConnectionTimeout,
-		Address: net.JoinHostPort(globalConfig.IPC.Host, strconv.Itoa(globalConfig.IPC.Port)),
+		Address:           net.JoinHostPort(globalConfig.IPC.Host, strconv.Itoa(globalConfig.IPC.Port)),
 	}
 
 	messageHandler := func(data []byte) ([]byte, error) {
@@ -64,7 +64,13 @@ func main() {
 		fmt.Printf("[DEBUG] 处理请求: %+v\n", req)
 
 		// 处理注册请求
-		if req.Type == "register" {
+		fmt.Printf("[DEBUG] 请求类型是否为注册: %v\n", req.Action == "register")
+		// 测试不匹配时打印 req 的字段参数及类型
+		if req.Action != "register" {
+			fmt.Printf("[DEBUG] 请求类型不匹配，当前请求类型: %T, 值: %v\n", req.Action, req.Action)
+			fmt.Printf("[DEBUG] 请求全部字段: %+v\n", req)
+		}
+		if req.Action == "register" {
 			service := &types.Service{}
 			if err := mapstructure.Decode(req.Service, service); err != nil {
 				// 返回包含result字段的错误响应
@@ -133,7 +139,7 @@ func main() {
 			os.Exit(1)
 		}
 	}()
-	
+
 	// 启动HTTP服务器
 	wg.Add(1)
 	go func() {

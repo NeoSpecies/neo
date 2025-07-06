@@ -205,15 +205,16 @@ func (c *Codec) ReadIPCMessage() (*MessageFrame, error) {
 		return nil, &ConnectionError{Type: ErrorTypeInvalidData, Message: "JSON缺少必要字段: action或service"}
 	}
 
-	serviceID := serviceData["id"].(string)
-	serviceName := serviceData["name"].(string)
-	address := serviceData["address"].(string)
-	port := int(serviceData["port"].(float64))
+	// 提取完整的service数据
+	serviceJSON, err := json.Marshal(serviceData)
+	if err != nil {
+		return nil, &ConnectionError{Type: ErrorTypeInvalidData, Message: fmt.Sprintf("服务数据序列化失败: %v", err)}
+	}
 
-	// 创建消息帧
+	// 创建消息帧，包含完整的service数据
 	return &MessageFrame{
 		Type:    action,
-		Payload: []byte(fmt.Sprintf(`{"service_id":"%s","name":"%s","address":"%s","port":%d}`, serviceID, serviceName, address, port)),
+		Payload: []byte(fmt.Sprintf(`{"action":"%s","service":%s}`, action, serviceJSON)),
 	}, nil
 }
 
