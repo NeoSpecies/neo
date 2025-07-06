@@ -1,5 +1,10 @@
 package types
 
+import (
+    "context"
+    "fmt"
+)
+
 // 任务接口定义
 type Task interface {
 	ID() string
@@ -35,4 +40,64 @@ type WorkerPoolConfig struct {
 	WorkerCount    int
 	MaxQueueSize   int
 	MaxTaskRetries int
+}
+
+// WorkerPoolAdapter 工作池适配器：解决WorkerPool接口适配问题
+type WorkerPoolAdapter struct {
+    WorkerPool WorkerPool
+}
+
+// Submit 实现WorkerPool接口的Submit方法
+func (a *WorkerPoolAdapter) Submit(task Task) chan TaskResult {
+    resultChan := make(chan TaskResult, 1)
+
+    transportTask := &transportTask{
+        ctx:    context.Background(),
+        result: make(chan *TaskResult, 1),
+    }
+
+    go func() {
+        defer close(transportTask.result)
+        result, err := task.Execute()
+        var data []byte
+        if result != nil {
+            if b, ok := result.([]byte); ok {
+                data = b
+            } else {
+                data = []byte(fmt.Sprintf("%v", result))
+            }
+        }
+        transportTask.result <- &TaskResult{
+            Result: data,
+            Error:  err,
+        }
+    }()
+
+    if err := a.WorkerPool.Submit(transportTask); err != nil {
+        resultChan <- TaskResult{
+            TaskID: task.ID(),
+            Error:  fmt.Errorf("任务提交失败: %v", err),
+        }
+        close(resultChan)
+        return resultChan
+    }
+
+    go func() {
+        defer close(resultChan)
+        select {
+        case res := <-transportTask.result:
+            resultChan <- TaskResult{
+                TaskID: task.ID(),
+                Result: res.Result,
+                Error:  res.Error,
+            }
+        case <-transportTask.ctx.Done():
+            resultChan <- TaskResult{
+                TaskID: task.ID(),
+                Error:  transportTask.ctx.Err(),
+            }
+        }
+    }()
+
+    return resultChan
 }

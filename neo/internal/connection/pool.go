@@ -374,8 +374,30 @@ func autoScale(pool *types.TCPConnectionPool) {
 }
 
 func InitPool() *types.TCPConnectionPool {
-	cfg := config.GetGlobalConfig() // 使用正确的配置获取函数
-	maxConns := cfg.IPC.MaxConnections
-	addr := cfg.IPC.Host + ":" + strconv.Itoa(cfg.IPC.Port)
-	return types.NewTCPConnectionPool(addr, maxConns)
+	cfg := config.GetGlobalConfig()
+	// 1. 从IPCConfig获取正确配置字段
+	poolConfig := types.Config{
+		MaxSize:           cfg.IPC.MaxConnections,
+		MinSize:           5,                // 使用默认值或从全局配置获取
+		InitialSize:       3,                // 使用默认值或从全局配置获取
+		IdleTimeout:       30 * time.Second, // 使用默认值
+		KeepAliveInterval: 15 * time.Second, // 使用默认值
+		// 添加其他必要配置
+		AutoScaling: true,
+		HealthCheck: true,
+	}
+	// 2. 创建连接工厂函数
+	factory := func() (net.Conn, error) {
+		return net.DialTimeout("tcp", cfg.IPC.Host+":"+strconv.Itoa(cfg.IPC.Port), poolConfig.ConnectTimeout)
+	}
+	// 3. 创建指标收集器
+	registry := prometheus.NewRegistry()
+	collector := &types.PrometheusCollector{}
+	metrics := types.NewMetrics(registry) // 添加这行，使用registry创建metrics实例
+	// 4. 初始化负载均衡器
+	balancer := types.NewRoundRobinBalancer("ipc-service", "default-method", collector)
+
+	// 5. 创建连接池（修正参数和返回值）
+	pool := types.NewTCPConnectionPool(poolConfig, factory, balancer, metrics) // 将nil改为metrics
+	return pool
 }

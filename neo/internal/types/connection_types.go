@@ -315,20 +315,6 @@ func (c *ConnectionServerConfig) GetMaxMsgSize() string {
 	return strconv.Itoa(c.MaxMsgSize) // 添加 strconv. 包前缀
 }
 
-// 重构为：通过结构体字段注入配置
-func NewTCPConnectionPool(addr string, maxConnections int) *TCPConnectionPool {
-	return &TCPConnectionPool{
-		MaxSize:     maxConnections,         // 使用结构体定义的MaxSize字段
-		Connections: make([]*Connection, 0), // 使用结构体定义的Connections字段
-		Mu:          &sync.RWMutex{},        // 使用结构体定义的Mu字段
-		// 添加必要的默认配置
-		Config: Config{
-			MaxSize:        maxConnections,
-			ConnectTimeout: 30 * time.Second,
-		},
-	}
-}
-
 // NewRoundRobinBalancer 创建新的轮询负载均衡器
 func NewRoundRobinBalancer(serviceName, methodName string, collector MetricsCollector) *RoundRobinBalancer {
 	return &RoundRobinBalancer{
@@ -660,4 +646,24 @@ func (c *Connection) Release(err error) {
 	c.LastUsed = time.Now()
 	c.InUse = false
 	// ... 原有释放连接逻辑 ...
+}
+
+// NewTCPConnectionPool 创建新的 TCP 连接池
+func NewTCPConnectionPool(config Config, factory func() (net.Conn, error), balancer Balancer, metrics *Metrics) *TCPConnectionPool {
+	return &TCPConnectionPool{
+		MaxSize:           config.MaxSize,
+		MinSize:           config.MinSize,
+		InitialSize:       config.InitialSize,
+		IdleTimeout:       config.IdleTimeout,
+		KeepAliveInterval: config.KeepAliveInterval,
+		Config:            config,
+		Factory:           factory,
+		Balancer:          balancer,
+		Metrics:           metrics,
+		Done:              make(chan struct{}),
+		WaitConn:          make(chan struct{}),
+		Connections:       make([]*Connection, 0),
+		Mu:                &sync.RWMutex{},
+		Closed:            false,
+	}
 }
