@@ -1,4 +1,4 @@
-// neo/internal/types/metrics_types_extended.go
+// neo/internal/types/metrics_extended.go
 package types
 
 import (
