@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"log"
 	"neo/internal/config"
-	neohttp "neo/internal/connection/http" // 添加别名以区分标准库
+	neohttp "neo/internal/connection/http" // 仅需导入内部HTTP包
 	"neo/internal/connection/tcp"
 	"neo/internal/discovery"
 	"neo/internal/ipcprotocol"
@@ -119,6 +119,33 @@ func main() {
 
 	// ======== HTTP服务器启动 ========
 	httpServer := neohttp.NewServer(&globalConfig.HTTP)
+
+	// 新增: 注册服务查询接口
+	httpServer.RegisterHandler("/services", func(w neohttp.ResponseWriter, r *neohttp.Request) {
+		// 使用完整包路径调用单例函数
+		ds := discovery.GetDiscoveryService()
+		// 修复：提供参数并接收两个返回值
+		services, err := ds.GetServices("")
+		if err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(neohttp.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"status":  "error",
+				"message": "failed to retrieve services",
+				"error":   err.Error(),
+			})
+			return
+		}
+
+		resp := map[string]interface{}{
+			"status":   "success",
+			"count":    len(services),
+			"services": services,
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(neohttp.StatusOK)
+		json.NewEncoder(w).Encode(resp)
+	})
 
 	// 使用WaitGroup等待两个服务器都启动
 	var wg sync.WaitGroup
