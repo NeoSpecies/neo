@@ -63,6 +63,9 @@ func main() {
 		// 添加调试日志
 		fmt.Printf("[DEBUG] 处理请求: %+v\n", req)
 
+		// 使用单例服务发现实例
+		discoveryService := discovery.GetDiscoveryService()
+
 		// 处理注册请求
 		fmt.Printf("[DEBUG] 请求类型是否为注册: %v\n", req.Action == "register")
 		// 测试不匹配时打印 req 的字段参数及类型
@@ -75,34 +78,26 @@ func main() {
 			if err := mapstructure.Decode(req.Service, service); err != nil {
 				// 返回包含result字段的错误响应
 				return json.Marshal(map[string]interface{}{
-					"result": nil,
-					"error": map[string]interface{}{
-						"code":    "INVALID_SERVICE_DATA",
-						"message": fmt.Sprintf("invalid service data: %v", err),
-					},
+					"result":  "error",
+					"message": fmt.Sprintf("failed to decode service: %v", err),
 				})
 			}
 
-			// 调用发现服务的注册方法
-			storage := discovery.NewInMemoryStorage()
-			discoveryInstance := types.NewDiscovery(storage)
-			discoveryService := &discovery.DiscoveryService{Discovery: discoveryInstance}
-
+			// 新增：使用单例服务实例注册服务
 			if err := discoveryService.Register(context.Background(), service); err != nil {
-				// 返回包含result字段的错误响应
 				return json.Marshal(map[string]interface{}{
-					"result": nil,
-					"error": map[string]interface{}{
-						"code":    "REGISTRATION_FAILED",
-						"message": err.Error(),
-					},
+					"result":  "error",
+					"message": fmt.Sprintf("registration failed: %v", err),
 				})
 			}
 
 			// 返回包含result字段的成功响应
 			return json.Marshal(map[string]interface{}{
-				"result": service,
-				"error":  nil,
+				"result": map[string]string{ // 修改为字典类型
+					"id":     service.ID, // 包含服务ID
+					"status": "registered",
+				},
+				"message": "service registered successfully",
 			})
 		}
 

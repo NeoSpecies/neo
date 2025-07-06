@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	types "neo/internal/types"
+	"sync"
 	"time"
 )
 
@@ -23,14 +24,15 @@ type EventType = types.EventType
 type Discovery = types.Discovery
 
 // New 创建服务发现实例
-func New(storage types.Storage) *Discovery {
+func New(storage types.Storage) *types.Discovery {
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Discovery{
+	return &types.Discovery{
 		Storage:  storage,
 		Events:   make(chan types.Event, 100),
 		Watchers: make(map[string][]chan types.Event),
 		Ctx:      ctx,
 		Cancel:   cancel,
+		Mu:       sync.RWMutex{}, // 添加互斥锁初始化
 	}
 }
 
