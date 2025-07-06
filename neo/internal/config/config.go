@@ -1,8 +1,11 @@
 package config
 
 import (
+	"io/ioutil"
 	"neo/internal/types"
 	"time"
+	"log"
+	"gopkg.in/yaml.v2"
 )
 
 // 修改默认配置引用
@@ -25,11 +28,30 @@ var defaultConfig = &types.GlobalConfig{
 		Enabled:           false,
 		PrometheusAddress: ":9091",
 	},
+	// 新增HTTP默认配置
+	HTTP: types.HTTPConfig{
+		Host:        "0.0.0.0",
+		Port:        8000,
+		EnableHTTPS: false,
+	},
 }
 
 // GetGlobalConfig 获取全局配置
 // 修改函数返回类型
 func GetGlobalConfig() *types.GlobalConfig {
-	// 实际项目中应从配置文件加载，此处返回默认配置
+	// 尝试从配置文件加载
+	configPath := "/www/neo/neo/configs/default.yml"
+	data, err := ioutil.ReadFile(configPath)
+	if err != nil {
+		log.Printf("警告: 无法读取配置文件 %s, 使用默认配置: %v", configPath, err)
+		return defaultConfig
+	}
+
+	// 合并配置文件到默认配置
+	if err := yaml.Unmarshal(data, defaultConfig); err != nil {
+		log.Printf("警告: 解析配置文件失败, 使用默认配置: %v", err)
+		return defaultConfig
+	}
+
 	return defaultConfig
 }

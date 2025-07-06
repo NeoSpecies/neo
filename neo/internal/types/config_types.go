@@ -17,12 +17,14 @@ import "time"
 // | Protocol       | ProtocolConfig       | 协议配置                      |
 // | Metrics        | MetricsConfig        | 指标收集配置                  |
 // | Pool           | PoolConfig           | 连接池配置                    |
+// | HTTP           | HTTPConfig           | HTTP服务器配置                |
 // +----------------+----------------------+-------------------------------+
 type GlobalConfig struct {
 	IPC      IPCConfig      `yaml:"ipc"`
 	Protocol ProtocolConfig `yaml:"protocol"`
 	Metrics  MetricsConfig  `yaml:"metrics"`
 	Pool     PoolConfig     `yaml:"pool"`
+	HTTP     HTTPConfig     `yaml:"http"` // 新增HTTP配置
 }
 
 // IPCConfig IPC服务器配置
@@ -99,4 +101,23 @@ type PoolConfig struct {
 	IdleTimeout         time.Duration `yaml:"idle_timeout"`
 	MaxLifetime         time.Duration `yaml:"max_lifetime"`
 	HealthCheckInterval time.Duration `yaml:"health_check_interval"`
+}
+
+// HTTPConfig HTTP服务器配置
+// 定义HTTP服务器的网络参数
+// +---------------------+-------------------+-----------------------------------+
+// | 字段名              | 类型              | 描述                              |
+// +---------------------+-------------------+-----------------------------------+
+// | Host                | string            | 服务器绑定主机地址                |
+// | Port                | int               | 服务器监听端口号                  |
+// | EnableHTTPS         | bool              | 是否启用HTTPS                     |
+// | CertFile            | string            | HTTPS证书文件路径                 |
+// | KeyFile             | string            | HTTPS密钥文件路径                 |
+// +---------------------+-------------------+-----------------------------------+
+type HTTPConfig struct {
+	Host        string `yaml:"host"`
+	Port        int    `yaml:"port"`
+	EnableHTTPS bool   `yaml:"enable_https"`
+	CertFile    string `yaml:"cert_file"`
+	KeyFile     string `yaml:"key_file"`
 }

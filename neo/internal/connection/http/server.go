@@ -2,38 +2,46 @@ package http
 
 import (
 	"fmt"
-	"neo/internal/config"
 	"neo/internal/types"
 	"net/http"
 )
 
+// 新增包级错误变量，封装标准库错误
+var (
+	ErrServerClosed = http.ErrServerClosed
+)
+
 // Server 表示HTTP服务器实例
 type Server struct {
-	config     *types.IPCConfig // 使用types包中的IPCConfig
+	config     *types.HTTPConfig // 修改为HTTPConfig
 	httpServer *http.Server
 }
 
 // NewServer 创建新的HTTP服务器实例
-func NewServer() *Server {
-	// 从全局配置获取IPC配置
-	cfg := config.GetGlobalConfig()
+func NewServer(config *types.HTTPConfig) *Server {
 	return &Server{
-		config: &cfg.IPC,
+		config: config,
 	}
 }
 
 // Start 启动HTTP服务器
 func (s *Server) Start() error {
-	mux := http.NewServeMux()
+	// 使用自定义Router替代标准库ServeMux
+	router := NewRouter()
 	// 注册HTTP处理器
-	s.registerHandlers(mux)
+	s.registerHandlers(router)
 
-	// 使用Host和Port字段构建地址（修复核心问题）
+	// 使用HTTP配置构建地址
 	s.httpServer = &http.Server{
 		Addr:    fmt.Sprintf("%s:%d", s.config.Host, s.config.Port),
-		Handler: mux,
+		Handler: router, // 使用自定义Router作为处理器
 	}
 
+	fmt.Printf("Starting HTTP server on %s:%d...\n", s.config.Host, s.config.Port)
+
+	if s.config.EnableHTTPS && s.config.CertFile != "" && s.config.KeyFile != "" {
+		return s.httpServer.ListenAndServeTLS(s.config.CertFile, s.config.KeyFile)
+	}
 	return s.httpServer.ListenAndServe()
 }
 
@@ -46,9 +54,10 @@ func (s *Server) Close() error {
 }
 
 // registerHandlers 注册HTTP处理器
-func (s *Server) registerHandlers(mux *http.ServeMux) {
+// 修改registerHandlers方法，使用自定义Router
+func (s *Server) registerHandlers(router *Router) {
 	// 注册实际的HTTP处理路由
-	mux.HandleFunc("/health", s.handleHealthCheck)
+	router.Handle("/health", s.handleHealthCheck)
 	// 添加其他路由...
 }
 

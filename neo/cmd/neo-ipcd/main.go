@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"neo/internal/config"
+	neohttp "neo/internal/connection/http" // 添加别名以区分标准库
 	"neo/internal/connection/tcp"
 	"neo/internal/discovery"
 	"neo/internal/ipcprotocol"
@@ -17,6 +18,7 @@ import (
 	"os/signal"
 	"strconv"
 	"syscall"
+	"sync"
 
 	"github.com/mitchellh/mapstructure"
 )
@@ -25,7 +27,7 @@ func main() {
 	// 获取全局配置
 	globalConfig := config.GetGlobalConfig()
 
-	// 启动指标服务器（修复循环依赖）
+	// 启动指标服务器
 	if err := metrics.StartServer(&globalConfig.Metrics); err != nil {
 		log.Fatalf("启动监控服务器失败: %v", err)
 	}
@@ -36,10 +38,9 @@ func main() {
 		globalConfig.IPC.WorkerCount,
 		globalConfig.IPC.WorkerCount*2, // 队列容量
 	)
-	// 使用types包中的WorkerPoolAdapter
 	adaptedWorkerPool := &types.WorkerPoolAdapter{WorkerPool: workerPool}
 
-	// 初始化服务器配置
+	// ======== TCP服务器启动 ========
 	serverConfig := &types.TCPConfig{
 		MaxConnections:    globalConfig.IPC.MaxConnections,
 		MaxMsgSize:        globalConfig.Protocol.MaxMessageSize,
@@ -47,7 +48,6 @@ func main() {
 		WriteTimeout:      globalConfig.IPC.WriteTimeout,
 		WorkerCount:       globalConfig.IPC.WorkerCount,
 		ConnectionTimeout: globalConfig.IPC.ConnectionTimeout,
-		// 直接设置地址，避免在TCPConfig内部依赖config包
 		Address: net.JoinHostPort(globalConfig.IPC.Host, strconv.Itoa(globalConfig.IPC.Port)),
 	}
 
@@ -110,23 +110,58 @@ func main() {
 
 		return respData, nil
 	}
-	// 创建TCP服务器时注入tcp包的工厂函数
-	server, err := tcp.NewServer(serverConfig, messageHandler)
+	tcpServer, err := tcp.NewServer(serverConfig, messageHandler)
 	if err != nil {
 		fmt.Printf("Failed to create TCP server: %v\n", err)
 		os.Exit(1)
 	}
 
-	fmt.Printf("Starting NEO IPC server on %s...\n", serverConfig.Address) // 修改
-	if err := server.Start(); err != nil {
-		fmt.Printf("Failed to start server: %v\n", err)
-		os.Exit(1)
-	}
-	defer server.Stop()
+	// ======== HTTP服务器启动 ========
+	httpServer := neohttp.NewServer(&globalConfig.HTTP)
 
-	fmt.Println("Server is running. Press Ctrl+C to stop.")
+	// 使用WaitGroup等待两个服务器都启动
+	var wg sync.WaitGroup
+
+	// 启动TCP服务器
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		fmt.Printf("Starting NEO IPC server on %s...\n", serverConfig.Address)
+		// 使用自定义HTTP包的错误
+		if err := tcpServer.Start(); err != nil && err != neohttp.ErrServerClosed {
+			fmt.Printf("TCP server failed: %v\n", err)
+			os.Exit(1)
+		}
+	}()
+	
+	// 启动HTTP服务器
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		// 使用自定义HTTP包的错误
+		if err := httpServer.Start(); err != nil && err != neohttp.ErrServerClosed {
+			fmt.Printf("HTTP server failed: %v\n", err)
+			os.Exit(1)
+		}
+	}()
+
+	// 优雅关闭处理
+	fmt.Println("Servers are running. Press Ctrl+C to stop.")
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	<-sigChan
+
 	fmt.Println("Received interrupt signal, shutting down...")
+	// 关闭HTTP服务器
+	if err := httpServer.Close(); err != nil {
+		fmt.Printf("HTTP server shutdown error: %v\n", err)
+	}
+	// 关闭TCP服务器
+	if err := tcpServer.Stop(); err != nil {
+		fmt.Printf("TCP server shutdown error: %v\n", err)
+	}
+
+	// 等待所有服务器关闭
+	wg.Wait()
+	fmt.Println("All servers stopped.")
 }

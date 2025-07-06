@@ -12,7 +12,7 @@ ipc:
 
 metrics:
   enabled: true                  # 是否启用指标收集
-  prometheus_address: :9091      # Prometheus暴露地址
+  prometheus_address: :9092      # Prometheus暴露地址
   collection_interval: 10s       # 指标收集间隔
 
 logging:
