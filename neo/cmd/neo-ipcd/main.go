@@ -52,66 +52,72 @@ func main() {
 	}
 
 	messageHandler := func(data []byte) ([]byte, error) {
+		log.Printf("收到请求数据: %s\n", string(data))
 		// 使用 discovery.IPCRequest 而非 types.Request
 		req := &discovery.IPCRequest{}
+
 		if err := json.Unmarshal(data, req); err != nil {
+			log.Printf("Failed to unmarshal request: %v, raw data: %s", err, string(data))
 			return nil, fmt.Errorf("failed to unmarshal request: %v", err)
 		}
-
 		// 添加调试日志
 		fmt.Printf("[DEBUG] 处理请求: %+v\n", req)
 
 		// 处理注册请求
-		if req.Action == "register" {
+		if req.Type == "register" {
 			service := &types.Service{}
 			if err := mapstructure.Decode(req.Service, service); err != nil {
+				// 返回包含result字段的错误响应
 				return json.Marshal(map[string]interface{}{
-					"success": false,
-					"error":   fmt.Sprintf("invalid service data: %v", err),
+					"result": nil,
+					"error": map[string]interface{}{
+						"code":    "INVALID_SERVICE_DATA",
+						"message": fmt.Sprintf("invalid service data: %v", err),
+					},
 				})
 			}
 
 			// 调用发现服务的注册方法
-			// 1. 确保已初始化Discovery实例（通常在main函数开头）
-			// 修改服务发现初始化代码
-			// 初始化内存存储（使用实际构造函数）
 			storage := discovery.NewInMemoryStorage()
-			// 创建Discovery实例 - 修改这一行
-			// discoveryInstance := discovery.New(storage)
 			discoveryInstance := types.NewDiscovery(storage)
-			// 包装成DiscoveryService
 			discoveryService := &discovery.DiscoveryService{Discovery: discoveryInstance}
 
-			// 调用Register方法
 			if err := discoveryService.Register(context.Background(), service); err != nil {
+				// 返回包含result字段的错误响应
 				return json.Marshal(map[string]interface{}{
-					"success": false,
-					"error":   err.Error(),
+					"result": nil,
+					"error": map[string]interface{}{
+						"code":    "REGISTRATION_FAILED",
+						"message": err.Error(),
+					},
 				})
 			}
 
+			// 返回包含result字段的成功响应
 			return json.Marshal(map[string]interface{}{
-				"success": true,
-				"result":  service,
+				"result": service,
+				"error":  nil,
 			})
 		}
 
 		// 原有处理逻辑
+		fmt.Printf("[DEBUG] 处理非注册请求: %s\n", string(data))
 		respData, err := ipcprotocol.ProcessMessage(data, serviceRegistry, adaptedWorkerPool)
 		if err != nil {
+			log.Printf("[ERROR] 非注册请求处理失败: %v\n", err)
 			return nil, err
 		}
 
 		return respData, nil
 	}
-
+	// 创建TCP服务器时注入tcp包的工厂函数
 	server, err := tcp.NewServer(serverConfig, messageHandler)
 	if err != nil {
 		fmt.Printf("Failed to create TCP server: %v\n", err)
 		os.Exit(1)
 	}
 
-	fmt.Println("Starting NEO IPC server...")
+	fmt.Printf("Starting NEO IPC server on %s...\n", serverConfig.Address) // 修改
 	if err := server.Start(); err != nil {
 		fmt.Printf("Failed to start server: %v\n", err)
 		os.Exit(1)

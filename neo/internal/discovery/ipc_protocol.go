@@ -1,13 +1,17 @@
 package discovery
 
-import "encoding/json"
+import (
+	"encoding/json"
+	types "neo/internal/types"
+)
 
 // IPCRequest IPC请求结构
 type IPCRequest struct {
-	Action  string   `json:"action"`  // register/deregister/list
-	Service *Service `json:"service"` // 服务数据（register/deregister时使用）
-	Name    string   `json:"name"`    // 服务名称（list时使用）
-	ID      string   `json:"id"`      // 服务ID（deregister时使用）
+	Type    string         `json:"type"` // 关键修复：添加JSON标签映射
+	Action  string         `json:"action,omitempty"`
+	Service *types.Service `json:"service,omitempty"`
+	Name    string         `json:"name,omitempty"`
+	ID      string         `json:"id,omitempty"`
 }
 
 // IPCResponse IPC响应结构

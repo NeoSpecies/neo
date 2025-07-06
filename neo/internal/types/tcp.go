@@ -62,7 +62,7 @@ func (c *Codec) ReadIPCMessage() (*MessageFrame, error) {
 	var paramLen uint32
 	var checksum uint32
 
-	// 读取魔数(2字节)
+	// 1. 读取并验证魔数(2字节)
 	if err := binary.Read(reader, binary.BigEndian, &magic); err != nil {
 		if err == io.EOF {
 			return nil, &ConnectionError{Type: ErrorTypeConnectionClosed, Message: "客户端断开连接", Err: err}
@@ -70,12 +70,22 @@ func (c *Codec) ReadIPCMessage() (*MessageFrame, error) {
 		return nil, &ConnectionError{Type: ErrorTypeInvalidData, Message: "读取魔数失败", Err: err}
 	}
 
-	// 读取版本(1字节)
+	// 验证魔数
+	if magic != MAGIC_NUMBER {
+		return nil, &ConnectionError{Type: ErrorTypeInvalidData, Message: fmt.Sprintf("魔数校验失败，期望0x%04X，实际0x%04X", MAGIC_NUMBER, magic)}
+	}
+
+	// 2. 读取并验证版本(1字节)
 	if err := binary.Read(reader, binary.BigEndian, &version); err != nil {
 		return nil, &ConnectionError{Type: ErrorTypeInvalidData, Message: "读取版本失败", Err: err}
 	}
 
-	// 读取消息ID长度(2字节)和内容
+	// 验证版本
+	if version != VERSION {
+		return nil, &ConnectionError{Type: ErrorTypeInvalidData, Message: fmt.Sprintf("版本不匹配，期望%d，实际%d", VERSION, version)}
+	}
+
+	// 3. 读取消息ID长度(2字节)和内容
 	if err := binary.Read(reader, binary.BigEndian, &msgIDLen); err != nil {
 		return nil, &ConnectionError{Type: ErrorTypeInvalidData, Message: "读取消息ID长度失败", Err: err}
 	}
@@ -84,7 +94,7 @@ func (c *Codec) ReadIPCMessage() (*MessageFrame, error) {
 		return nil, &ConnectionError{Type: ErrorTypeInvalidData, Message: "读取消息ID内容失败", Err: err}
 	}
 
-	// 读取方法名长度(2字节)和内容
+	// 4. 读取方法名长度(2字节)和内容
 	if err := binary.Read(reader, binary.BigEndian, &methodLen); err != nil {
 		return nil, &ConnectionError{Type: ErrorTypeInvalidData, Message: "读取方法名长度失败", Err: err}
 	}
@@ -93,7 +103,7 @@ func (c *Codec) ReadIPCMessage() (*MessageFrame, error) {
 		return nil, &ConnectionError{Type: ErrorTypeInvalidData, Message: "读取方法名内容失败", Err: err}
 	}
 
-	// 读取参数长度(4字节)和内容
+	// 5. 读取参数长度(4字节)和内容
 	if err := binary.Read(reader, binary.BigEndian, &paramLen); err != nil {
 		return nil, &ConnectionError{Type: ErrorTypeInvalidData, Message: "读取参数长度失败", Err: err}
 	}
@@ -106,19 +116,9 @@ func (c *Codec) ReadIPCMessage() (*MessageFrame, error) {
 		return nil, &ConnectionError{Type: ErrorTypeInvalidData, Message: "读取参数内容失败", Err: err}
 	}
 
-	// 读取校验和(4字节)
+	// 6. 读取并验证CRC32校验和(4字节)
 	if err := binary.Read(reader, binary.BigEndian, &checksum); err != nil {
 		return nil, &ConnectionError{Type: ErrorTypeInvalidData, Message: "读取校验和失败", Err: err}
-	}
-
-	// 验证魔数
-	if magic != MAGIC_NUMBER {
-		return nil, &ConnectionError{Type: ErrorTypeInvalidData, Message: fmt.Sprintf("魔数校验失败，期望0x%04X，实际0x%04X", MAGIC_NUMBER, magic)}
-	}
-
-	// 验证版本
-	if version != VERSION {
-		return nil, &ConnectionError{Type: ErrorTypeInvalidData, Message: fmt.Sprintf("版本不匹配，期望%d，实际%d", VERSION, version)}
 	}
 
 	// 验证校验和
@@ -169,24 +169,31 @@ func (c *Codec) WriteIPCMessage(frame *MessageFrame) error {
 
 	buffer := new(bytes.Buffer)
 
-	// 写入魔数(2字节)
+	// 1. 写入魔数(2字节)
 	if err := binary.Write(buffer, binary.BigEndian, MAGIC_NUMBER); err != nil {
 		return &ConnectionError{Type: ErrorTypeWriteFailed, Message: "写入魔数失败", Err: err}
 	}
 
-	// 写入版本(1字节)
+	// 2. 写入版本(1字节)
 	if err := binary.Write(buffer, binary.BigEndian, VERSION); err != nil {
 		return &ConnectionError{Type: ErrorTypeWriteFailed, Message: "写入版本失败", Err: err}
 	}
 
-	// 写入响应体长度(4字节)
-	if err := binary.Write(buffer, binary.BigEndian, uint32(len(frame.Payload))); err != nil {
-		return &ConnectionError{Type: ErrorTypeWriteFailed, Message: "写入长度失败", Err: err}
+	// 删除3. 消息ID和4. 方法名相关代码
+
+	// 5. 写入参数长度(4字节)和内容 → 现在紧跟版本字段，与客户端匹配
+	paramLen := uint32(len(frame.Payload))
+	if err := binary.Write(buffer, binary.BigEndian, paramLen); err != nil {
+		return &ConnectionError{Type: ErrorTypeWriteFailed, Message: "写入参数长度失败", Err: err}
+	}
+	if _, err := buffer.Write(frame.Payload); err != nil {
+		return &ConnectionError{Type: ErrorTypeWriteFailed, Message: "写入参数内容失败", Err: err}
 	}
 
-	// 写入响应体
-	if _, err := buffer.Write(frame.Payload); err != nil {
-		return &ConnectionError{Type: ErrorTypeWriteFailed, Message: "写入响应体失败", Err: err}
+	// 6. 重新计算校验和(仅包含魔数+版本+参数长度+参数内容)
+	checksum := crc32.ChecksumIEEE(buffer.Bytes())
+	if err := binary.Write(buffer, binary.BigEndian, checksum); err != nil {
+		return &ConnectionError{Type: ErrorTypeWriteFailed, Message: "写入校验和失败", Err: err}
 	}
 
 	// 写入数据并刷新缓冲区

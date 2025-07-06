@@ -1,7 +1,10 @@
 package ipcprotocol
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
+	"neo/internal/discovery"
 	"neo/internal/types"
 	"time"
 )
@@ -70,7 +73,53 @@ func ProcessMessage(data []byte, registry *types.ServiceRegistry, workerPool typ
 			return marshalResponse(resp)
 		}
 
-		// 提交任务到工作池处理
+		// 新增：处理注册请求
+		if req.Service == "discovery" && req.Method == "register" {
+			// 解析注册请求参数
+			var registerParams struct {
+				ServiceID string `json:"service_id"`
+				Name      string `json:"name"`
+				Address   string `json:"address"`
+				Port      int    `json:"port"`
+			}
+			if err := json.Unmarshal(req.Params, &registerParams); err != nil {
+				resp := NewErrorResponse(req.RequestID, types.ErrorCodeInvalidRequest, "Invalid register parameters")
+				return marshalResponse(resp)
+			}
+
+			// 创建服务实例
+			service := &types.Service{
+				ID:        registerParams.ServiceID,
+				Name:      registerParams.Name,
+				Address:   registerParams.Address,
+				Port:      registerParams.Port,
+				Status:    "active",
+				UpdatedAt: time.Now(),
+				ExpireAt:  time.Now().Add(30 * time.Minute), // 设置30分钟租约
+			}
+
+			// 注册服务
+			// 修复：使用正确的服务发现注册方式，与main.go保持一致
+			storage := discovery.NewInMemoryStorage()
+			discoveryInstance := types.NewDiscovery(storage)
+			discoveryService := &discovery.DiscoveryService{Discovery: discoveryInstance}
+			if err := discoveryService.Register(context.Background(), service); err != nil {
+				resp := NewErrorResponse(req.RequestID, types.ErrorCodeInternalError, fmt.Sprintf("Failed to register service: %v", err))
+				return marshalResponse(resp)
+			}
+
+			// 返回包含result字段的响应
+			result := map[string]interface{}{
+				"result": service,
+			}
+			resp, err := NewResponse(req.RequestID, result)
+			if err != nil {
+				return marshalResponse(NewErrorResponse(req.RequestID, types.ErrorCodeInternalError, "Failed to create response"))
+			}
+			return marshalResponse(resp)
+		}
+
+		// 原有代码：提交任务到工作池处理
 		task := &types.IPCTask{
 			TaskID:   req.RequestID,
 			Req:      &req,
@@ -109,11 +158,8 @@ func ProcessMessage(data []byte, registry *types.ServiceRegistry, workerPool typ
 
 // 辅助函数：序列化响应
 func marshalResponse(resp *types.Response) ([]byte, error) {
-	responseFrame := &types.MessageFrame{
-		Type:    string(types.MessageTypeResponse),
-		Payload: []byte(json.RawMessage(resp.Data)),
-	}
-	return json.Marshal(responseFrame)
+    // 移除MessageFrame包装，直接返回响应数据
+    return resp.Data, nil
 }
 
 // NewRequestID 生成请求ID

@@ -123,6 +123,9 @@ type LatencyStats struct {
 	samples    []float64 // 最近的样本
 	currentPos int       // 当前样本位置
 }
+
+// MessageCallback 定义了消息回调函数类型，接收字节切片并返回处理后的字节切片和可能的错误
+// 具体实现通常在使用该回调的模块中，如处理网络消息的处理器里
 type MessageCallback func([]byte) ([]byte, error)
 
 // NewLatencyStats 创建延迟统计
