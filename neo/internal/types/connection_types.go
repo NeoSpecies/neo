@@ -1,3 +1,10 @@
+/*
+ * 文件: connection_types.go
+ * 描述: 定义连接池管理、连接统计和负载均衡相关的核心类型，包括连接池配置、连接状态跟踪、延迟统计和轮询负载均衡实现
+ * 作者: Cogito
+ * 日期: 2025-06-18
+ * 联系方式: neospecies@outlook.com
+ */
 package types
 
 import (
@@ -25,6 +32,28 @@ var (
 )
 
 // Config 统一连接池配置
+// 定义连接池的基本参数和行为特性
+// +---------------------+-------------------+-----------------------------------+
+// | 字段名              | 类型              | 描述                              |
+// +---------------------+-------------------+-----------------------------------+
+// | MaxSize             | int               | 最大连接数                        |
+// | MinSize             | int               | 最小连接数                        |
+// | ConnectTimeout      | time.Duration     | 连接超时时间                      |
+// | IdleTimeout         | time.Duration     | 空闲超时时间                      |
+// | KeepAliveInterval   | time.Duration     | 保持连接间隔                      |
+// | InitialSize         | int               | 初始连接数                        |
+// | AutoScaling         | bool              | 是否启用自动扩缩容                |
+// | ScaleUpThreshold    | float64           | 扩容阈值（活跃连接比例）          |
+// | ScaleDownThreshold  | float64           | 缩容阈值（空闲连接比例）          |
+// | ScaleStep           | int               | 每次扩缩容步长                    |
+// | HealthCheck         | bool              | 是否启用健康检查                  |
+// | HealthCheckInterval | time.Duration     | 健康检查间隔                      |
+// | MaxErrorCount       | int               | 最大错误次数                      |
+// | MaxLatency          | time.Duration     | 最大延迟阈值                      |
+// | LoadBalance         | LoadBalanceStrategy | 负载均衡策略                  |
+// | MaxRetryCount       | int               | 连接创建最大重试次数              |
+// | RetryInterval       | time.Duration     | 连接重试间隔                      |
+// +---------------------+-------------------+-----------------------------------+
 type Config struct {
 	// 基础配置
 	MaxSize           int           // 最大连接数
@@ -49,6 +78,15 @@ type Config struct {
 }
 
 // ScalingConfig 自动扩缩容配置
+// 定义连接池自动扩缩容的参数
+// +---------------------+-------------------+-----------------------------------+
+// | 字段名              | 类型              | 描述                              |
+// +---------------------+-------------------+-----------------------------------+
+// | MinSize             | int               | 最小连接数                        |
+// | MaxSize             | int               | 最大连接数                        |
+// | ExpandPct           | int               | 扩容阈值百分比                    |
+// | ShrinkPct           | int               | 缩容阈值百分比                    |
+// +---------------------+-------------------+-----------------------------------+
 type ScalingConfig struct {
 	MinSize   int // 最小连接数
 	MaxSize   int // 最大连接数
@@ -57,6 +95,19 @@ type ScalingConfig struct {
 }
 
 // Connection 统一连接结构体
+// 封装底层网络连接并跟踪连接状态和统计信息
+// +---------------------+-------------------+-----------------------------------+
+// | 字段名              | 类型              | 描述                              |
+// +---------------------+-------------------+-----------------------------------+
+// | Conn                | net.Conn          | 底层连接                          |
+// | Pool                | *TCPConnectionPool | 所属连接池                      |
+// | Stats               | *ConnectionStats  | 连接统计                          |
+// | LastUsed            | time.Time         | 最后使用时间                      |
+// | LastCheck           | time.Time         | 最后检查时间                      |
+// | InUse               | bool              | 是否正在使用                      |
+// | ErrorCount          | int               | 错误次数                          |
+// | Closed              | bool              | 是否已关闭                        |
+// +---------------------+-------------------+-----------------------------------+
 type Connection struct {
 	Conn       net.Conn           // 底层连接
 	Pool       *TCPConnectionPool // 所属连接池
@@ -69,6 +120,25 @@ type Connection struct {
 }
 
 // TCPConnectionPool 连接池结构体
+// 管理TCP连接的创建、复用和销毁，实现连接池核心功能
+// +---------------------+-------------------+-----------------------------------+
+// | 字段名              | 类型              | 描述                              |
+// +---------------------+-------------------+-----------------------------------+
+// | MaxSize             | int               | 最大连接数                        |
+// | MinSize             | int               | 最小连接数                        |
+// | InitialSize         | int               | 初始连接数                        |
+// | IdleTimeout         | time.Duration     | 空闲超时时间                      |
+// | KeepAliveInterval   | time.Duration     | 保持连接间隔                      |
+// | Config              | Config            | 连接池配置                        |
+// | Factory             | func() (net.Conn, error) | 连接创建工厂函数             |
+// | Balancer            | Balancer          | 负载均衡器                        |
+// | Metrics             | *Metrics          | 指标收集器                        |
+// | Done                | chan struct{}     | 关闭信号通道                      |
+// | WaitConn            | chan struct{}     | 连接等待通道                      |
+// | Connections         | []*Connection     | 连接列表                          |
+// | Mu                  | *sync.RWMutex     | 读写锁                            |
+// | Closed              | bool              | 是否已关闭                        |
+// +---------------------+-------------------+-----------------------------------+
 type TCPConnectionPool struct {
 	MaxSize           int                      `json:"max_size"`
 	MinSize           int                      `json:"min_size"`
@@ -87,6 +157,16 @@ type TCPConnectionPool struct {
 }
 
 // ConnectionPoolMetrics 连接池指标
+// 跟踪连接池的性能指标和状态统计
+// +---------------------+-------------------+-----------------------------------+
+// | 字段名              | 类型              | 描述                              |
+// +---------------------+-------------------+-----------------------------------+
+// | ActiveConnections   | int64             | 活跃连接数                        |
+// | TotalConnections   | int64             | 总连接数                          |
+// | WaitingRequests    | int64             | 等待请求数                        |
+// | ConnectionErrors   | int64             | 连接错误数                        |
+// | ConnectionTimeouts | int64             | 连接超时数                        |
+// +---------------------+-------------------+-----------------------------------+
 type ConnectionPoolMetrics struct {
 	ActiveConnections  int64 // 活跃连接数
 	TotalConnections   int64 // 总连接数
@@ -96,7 +176,21 @@ type ConnectionPoolMetrics struct {
 }
 
 // ConnectionStats 连接统计信息
-// 扩展原有定义，增加BytesRead和BytesWritten字段
+// 记录单个连接的使用情况和性能指标
+// +---------------------+-------------------+-----------------------------------+
+// | 字段名              | 类型              | 描述                              |
+// +---------------------+-------------------+-----------------------------------+
+// | CreatedAt           | time.Time         | 创建时间                          |
+// | LastUsed            | time.Time         | 最后使用时间                      |
+// | UsageCount          | int64             | 使用次数                          |
+// | ReadBytes           | int64             | 读取字节数                        |
+// | WrittenBytes        | int64             | 写入字节数                        |
+// | ErrorCount          | int64             | 错误次数                          |
+// | LastError           | error             | 最后错误                          |
+// | BytesRead           | uint64            | 读取字节数（新增）                |
+// | BytesWritten        | uint64            | 写入字节数（新增）                |
+// | LastActive          | time.Time         | 最后活动时间（新增）              |
+// +---------------------+-------------------+-----------------------------------+
 type ConnectionStats struct {
 	CreatedAt    time.Time // 创建时间
 	LastUsed     time.Time // 最后使用时间
@@ -111,6 +205,21 @@ type ConnectionStats struct {
 }
 
 // LatencyStats 延迟统计
+// 收集和分析连接的延迟数据，支持滑动窗口和分布统计
+// +---------------------+-------------------+-----------------------------------+
+// | 字段名              | 类型              | 描述                              |
+// +---------------------+-------------------+-----------------------------------+
+// | mu                  | sync.RWMutex      | 读写锁                            |
+// | count               | int64             | 样本总数                          |
+// | sum                 | time.Duration     | 总延迟                            |
+// | min                 | time.Duration     | 最小延迟                          |
+// | max                 | time.Duration     | 最大延迟                          |
+// | buckets             | []int64           | 延迟分布桶                        |
+// | boundaries          | []float64         | 桶边界（毫秒）                    |
+// | windowSize          | int               | 滑动窗口大小                      |
+// | samples             | []float64         | 最近的样本                        |
+// | currentPos          | int               | 当前样本位置                      |
+// +---------------------+-------------------+-----------------------------------+
 type LatencyStats struct {
 	mu         sync.RWMutex
 	count      int64
@@ -124,11 +233,22 @@ type LatencyStats struct {
 	currentPos int       // 当前样本位置
 }
 
-// MessageCallback 定义了消息回调函数类型，接收字节切片并返回处理后的字节切片和可能的错误
-// 具体实现通常在使用该回调的模块中，如处理网络消息的处理器里
+// MessageCallback 定义了消息回调函数类型
+// 接收字节切片并返回处理后的字节切片和可能的错误
+// +---------------------+-------------------+-----------------------------------+
+// | 参数                | 类型              | 描述                              |
+// +---------------------+-------------------+-----------------------------------+
+// | []byte              | byte切片          | 输入消息数据                      |
+// | 返回值1             | []byte            | 处理后的消息数据                  |
+// | 返回值2             | error             | 处理过程中发生的错误              |
+// +---------------------+-------------------+-----------------------------------+
 type MessageCallback func([]byte) ([]byte, error)
 
-// NewLatencyStats 创建延迟统计
+// NewLatencyStats 创建延迟统计实例
+// 初始化一个新的LatencyStats，设置默认参数
+// +---------------------+-------------------+-----------------------------------+
+// | 返回值              | *LatencyStats     | 初始化后的延迟统计实例            |
+// +---------------------+-------------------+-----------------------------------+
 func NewLatencyStats() *LatencyStats {
 	return &LatencyStats{
 		min:        time.Duration(1<<63 - 1),
@@ -140,6 +260,12 @@ func NewLatencyStats() *LatencyStats {
 }
 
 // Add 添加一个延迟样本
+// 将新的延迟数据添加到统计中，更新分布桶和滑动窗口
+// +---------------------+-------------------+-----------------------------------+
+// | 参数                | 类型              | 描述                              |
+// +---------------------+-------------------+-----------------------------------+
+// | latency             | time.Duration     | 延迟时间                          |
+// +---------------------+-------------------+-----------------------------------+
 func (s *LatencyStats) Add(latency time.Duration) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -200,6 +326,10 @@ func (m *CallbackManager) HandleResponse(msgID string, result interface{}, err e
 }
 
 // NewConnectionStats 创建新的连接统计信息
+// 初始化一个新的ConnectionStats实例，设置创建时间和最后使用时间
+// +---------------------+-------------------+-----------------------------------+
+// | 返回值              | *ConnectionStats  | 初始化后的连接统计实例            |
+// +---------------------+-------------------+-----------------------------------+
 func NewConnectionStats() *ConnectionStats {
 	return &ConnectionStats{
 		CreatedAt: time.Now(),
@@ -208,12 +338,23 @@ func NewConnectionStats() *ConnectionStats {
 }
 
 // CallbackManager 管理连接相关事件的回调函数
+// 提供线程安全的回调注册、执行和超时清理功能
+// +---------------------+-------------------+-----------------------------------+
+// | 字段名              | 类型              | 描述                              |
+// +---------------------+-------------------+-----------------------------------+
+// | callbacks           | sync.RWMutex      | 读写锁                            |
+// | registry            | map[string]Callback | 回调函数注册表                  |
+// +---------------------+-------------------+-----------------------------------+
 type CallbackManager struct {
 	callbacks sync.RWMutex
 	registry  map[string]Callback
 }
 
 // NewCallbackManager 创建回调管理器实例
+// 初始化一个新的CallbackManager，创建空的回调注册表
+// +---------------------+-------------------+-----------------------------------+
+// | 返回值              | *CallbackManager  | 初始化后的回调管理器实例          |
+// +---------------------+-------------------+-----------------------------------+
 func NewCallbackManager() *CallbackManager {
 	return &CallbackManager{
 		registry: make(map[string]Callback),
@@ -253,16 +394,35 @@ func (p *BasicConnectionPool) Get() (net.Conn, error) {
 		return nil, ErrPoolClosed
 	}
 
-	// 从连接池获取连接
+	// 尝试从池中获取连接
 	select {
 	case conn := <-p.pool:
 		return conn, nil
 	default:
-		// 池为空，创建新连接
-		if p.createFn != nil {
-			return p.createFn()
+		// 池为空，继续后续处理
+	}
+
+	// 如果可以创建新连接，则直接创建
+	if p.createFn != nil {
+		return p.createFn()
+	}
+
+	// 无法创建新连接时，循环等待可用连接
+	for {
+		p.mu.Unlock()
+		time.Sleep(10 * time.Millisecond)
+		p.mu.Lock()
+
+		if p.closed {
+			return nil, ErrPoolClosed
 		}
-		return nil, ErrPoolExhausted
+
+		select {
+		case conn := <-p.pool:
+			return conn, nil
+		default:
+			// 继续等待
+		}
 	}
 }
 
@@ -324,34 +484,6 @@ func NewRoundRobinBalancer(serviceName, methodName string, collector MetricsColl
 		methodName:       methodName,
 		metricsCollector: collector,
 	}
-}
-
-// Pick 轮询选择一个连接
-func (r *RoundRobinBalancer) Pick(availableConns []interface{}) (interface{}, error) {
-	// 修复S1009: 移除多余的nil检查，直接检查长度
-	if len(availableConns) == 0 {
-		r.mu.Lock()
-		defer r.mu.Unlock()
-		availableConns = r.connections
-	}
-
-	if len(availableConns) == 0 {
-		err := errors.New("没有可用连接")
-		if r.metricsCollector != nil {
-			ctx := context.Background()
-			startTime := time.Now()
-			r.metricsCollector.CollectResponse(ctx, r.serviceName, r.methodName, startTime, err)
-		}
-		return nil, err
-	}
-
-	// 轮询选择连接
-	(r.mu).Lock()
-	conn := availableConns[r.index]
-	r.index = (r.index + 1) % len(availableConns)
-	(r.mu).Unlock()
-
-	return conn, nil
 }
 
 // Release 释放连接
@@ -602,37 +734,35 @@ func (p *TCPConnectionPool) Acquire() (*Connection, error) {
 		return nil, ErrPoolClosed
 	}
 
-	for {
-		p.Mu.RLock()
-		defer p.Mu.RUnlock()
+	p.Mu.RLock()
+	defer p.Mu.RUnlock()
 
-		// 使用负载均衡器选择连接
-		if p.Balancer != nil {
-			availableConns := make([]interface{}, len(p.Connections))
-			for i, conn := range p.Connections {
-				availableConns[i] = conn
-			}
-			result, err := p.Balancer.Pick(availableConns)
-			if err != nil {
-				return nil, err
-			}
-			conn, ok := result.(*Connection)
-			if !ok {
-				return nil, errors.New("invalid connection type returned by balancer")
-			}
+	// 使用负载均衡器选择连接
+	if p.Balancer != nil {
+		availableConns := make([]interface{}, len(p.Connections))
+		for i, conn := range p.Connections {
+			availableConns[i] = conn
+		}
+		result, err := p.Balancer.Pick(availableConns)
+		if err != nil {
+			return nil, err
+		}
+		conn, ok := result.(*Connection)
+		if !ok {
+			return nil, errors.New("invalid connection type returned by balancer")
+		}
+		return conn, nil
+	}
+
+	// 无负载均衡器时的连接选择逻辑
+	for _, conn := range p.Connections {
+		if !conn.InUse && !conn.Closed && time.Since(conn.LastUsed) < p.IdleTimeout {
+			conn.InUse = true
 			return conn, nil
 		}
-
-		// 无负载均衡器时的连接选择逻辑
-		for _, conn := range p.Connections {
-			if !conn.InUse && !conn.Closed && time.Since(conn.LastUsed) < p.IdleTimeout {
-				conn.InUse = true
-				return conn, nil
-			}
-		}
-
-		return nil, ErrPoolExhausted
 	}
+
+	return nil, ErrPoolExhausted
 }
 
 // 添加Release方法到Connection
@@ -649,6 +779,16 @@ func (c *Connection) Release(err error) {
 }
 
 // NewTCPConnectionPool 创建新的 TCP 连接池
+// 初始化一个新的TCPConnectionPool实例，设置配置、工厂函数、负载均衡器和指标收集器
+// +---------------------+-------------------+-----------------------------------+
+// | 参数                | 类型              | 描述                              |
+// +---------------------+-------------------+-----------------------------------+
+// | config              | Config            | 连接池配置                        |
+// | factory             | func() (net.Conn, error) | 连接创建工厂函数             |
+// | balancer            | Balancer          | 负载均衡器                        |
+// | metrics             | *Metrics          | 指标收集器                        |
+// | 返回值              | *TCPConnectionPool | 初始化后的TCP连接池实例         |
+// +---------------------+-------------------+-----------------------------------+
 func NewTCPConnectionPool(config Config, factory func() (net.Conn, error), balancer Balancer, metrics *Metrics) *TCPConnectionPool {
 	return &TCPConnectionPool{
 		MaxSize:           config.MaxSize,
