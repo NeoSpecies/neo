@@ -50,7 +50,8 @@ func (s *InMemoryStorage) List(ctx context.Context, serviceName string) ([]*type
 	defer s.mu.RUnlock()
 	var result []*types.Service
 	for _, service := range s.services {
-		if service.Name == serviceName && service.ExpireAt.After(time.Now()) {
+		// 修改：当serviceName为空时返回所有未过期服务
+		if (serviceName == "" || service.Name == serviceName) && service.ExpireAt.After(time.Now()) {
 			result = append(result, service)
 			log.Printf("Registered service: %+v\n", service)
 		}
