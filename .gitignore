@@ -1,0 +1,98 @@
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+*.prof
+coverage.html
+
+# Go vendor directory
+vendor/
+
+# IDE specific files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.*.swp
+
+# OS specific files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Log files
+*.log
+logs/
+
+# Temporary files
+*.tmp
+*.temp
+tmp/
+temp/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.Python
+env/
+venv/
+.env
+*.pyc
+
+# Build outputs
+bin/
+dist/
+build/
+*.pkg
+
+# Configuration overrides (keep only default configs)
+configs/*.local.yml
+configs/*.override.yml
+configs/*.dev.yml
+
+# Environment files
+*.env
+neo_ports.env
+
+# Debug files
+debug/
+*.pprof
+
+# Test coverage
+coverage/
+.coverage
+htmlcov/
+
+# Documentation build
+docs/_build/
+docs/.sphinx/
+
+# AI Assistant files
+.claude/
+.claude*
+claude.json
+.anthropic/
+.cursor/
+.cursorignore
+.aider*
+.copilot/
+
+# Local development notes
+*.local.md
+notes/
+.notes/
+
+# Personal configuration
+.personal/
+*.personal.*

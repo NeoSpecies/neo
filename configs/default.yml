@@ -1,0 +1,38 @@
+# Neo Framework 配置文件
+server:
+  name: "neo-gateway"
+  version: "0.1.0"
+
+# 传输层配置
+transport:
+  timeout: 30000              # 超时时间（毫秒）
+  retry_count: 3              # 重试次数
+  max_connections: 100        # 最大连接数
+  min_connections: 10         # 最小连接数
+  max_idle_time: 300000       # 最大空闲时间（毫秒）
+  health_check_interval: 30000 # 健康检查间隔（毫秒）
+
+# 服务注册中心配置
+registry:
+  type: "inmemory"            # 注册中心类型
+  health_check_interval: 30   # 健康检查间隔（秒）
+
+# HTTP网关配置
+gateway:
+  address: ":8080"            # HTTP监听地址
+  read_timeout: 30            # 读取超时（秒）
+  write_timeout: 30           # 写入超时（秒）
+
+# IPC服务器配置
+ipc:
+  address: ":9999"            # IPC监听地址
+  max_clients: 200            # 最大客户端连接数
+
+# 日志配置
+logging:
+  level: "info"               # 日志级别: debug, info, warn, error
+  format: "json"              # 日志格式: json, text
+  output: "console"           # 输出目标: console, file
+
+# 运行模式
+mode: "production"            # 运行模式: development, production, test
