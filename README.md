@@ -449,10 +449,10 @@ ipc → registry
 
 ## 联系方式
 
-- 项目主页：[https://github.com/yourusername/neo](https://github.com/yourusername/neo)
-- 问题追踪：[https://github.com/yourusername/neo/issues](https://github.com/yourusername/neo/issues)
+- 项目主页：[https://github.com/NeoSpecies/neo/](https://github.com/NeoSpecies/neo/)
+- 问题追踪：[https://github.com/NeoSpecies/neo//issues](https://github.com/NeoSpecies/neo//issues)
 
 ---
 
 **当前版本**：0.1.0-alpha  
-**最后更新**：2025年1月14日
+**最后更新**：2025年7月14日
