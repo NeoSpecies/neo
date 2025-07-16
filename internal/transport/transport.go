@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"neo/internal/config"
 	"neo/internal/transport/conn"
 	"neo/internal/types"
 	"neo/internal/utils"
@@ -42,7 +41,7 @@ type TransportStats struct {
 
 // transportImpl 传输层实现
 type transportImpl struct {
-	config    config.TransportConfig
+	config    Config  // 使用本地Config类型
 	pool      conn.ConnectionPool
 	listener  net.Listener
 	logger    utils.Logger
@@ -55,26 +54,32 @@ type transportImpl struct {
 	wg        sync.WaitGroup
 }
 
+// Config 传输层配置
+type Config struct {
+	Timeout               time.Duration
+	RetryCount            int
+	MaxConnections        int
+	MinConnections        int
+	MaxIdleTime           time.Duration
+	HealthCheckInterval   time.Duration
+	ActivityCheckInterval time.Duration // 活动检查间隔
+}
+
 // NewTransport 创建传输层实例
-func NewTransport(cfg config.Config) Transport {
+func NewTransport(cfg Config) Transport {
 	poolConfig := &conn.PoolConfig{
-		MaxSize:             cfg.Transport.MaxConnections,
-		MinSize:             cfg.Transport.MinConnections,
-		MaxIdleTime:         time.Duration(cfg.Transport.MaxIdleTime),
-		ConnectionTimeout:   time.Duration(cfg.Transport.Timeout),
-		HealthCheckInterval: 30 * time.Second, // 使用固定值，如果配置为0
-		MaxRetries:          cfg.Transport.RetryCount,
-	}
-	
-	// 如果配置中有健康检查间隔，使用配置值
-	if cfg.Transport.HealthCheckInterval > 0 {
-		poolConfig.HealthCheckInterval = time.Duration(cfg.Transport.HealthCheckInterval)
+		MaxSize:             cfg.MaxConnections,
+		MinSize:             cfg.MinConnections,
+		MaxIdleTime:         cfg.MaxIdleTime,
+		ConnectionTimeout:   cfg.Timeout,
+		HealthCheckInterval: cfg.HealthCheckInterval,
+		MaxRetries:          cfg.RetryCount,
 	}
 
 	pool := conn.NewConnectionPool(poolConfig, nil)
 
 	return &transportImpl{
-		config:   cfg.Transport,
+		config:   cfg, // 现在使用Transport.Config而不是config.TransportConfig
 		pool:     pool,
 		logger:   utils.DefaultLogger,
 		handlers: make(map[string]func(msg types.Message)),
@@ -296,7 +301,12 @@ func (t *transportImpl) handleConnection(netConn net.Conn) {
 	
 	// 包装为连接接口
 	id := fmt.Sprintf("server-conn-%d", time.Now().UnixNano())
-	connection := conn.NewTCPConnection(netConn, id, 30*time.Second, 30*time.Second)
+	tcpConn := conn.NewTCPConnection(netConn, id, t.config.Timeout, t.config.Timeout)
+	// 如果有活动检查间隔配置，设置它
+	if activityInterval := t.getActivityCheckInterval(); activityInterval > 0 {
+		tcpConn.SetActivityCheckInterval(activityInterval)
+	}
+	connection := tcpConn
 	
 	t.logger.Info("client connected", 
 		utils.String("remoteAddr", connection.RemoteAddr()),
@@ -310,7 +320,7 @@ func (t *transportImpl) handleConnection(netConn net.Conn) {
 		}
 		
 		// 接收消息
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), t.config.Timeout)
 		data, err := connection.Receive(ctx)
 		cancel()
 		
@@ -373,4 +383,13 @@ func (t *transportImpl) updateStats(fn func(*TransportStats)) {
 	t.statsMu.Lock()
 	defer t.statsMu.Unlock()
 	fn(&t.stats)
+}
+
+// getActivityCheckInterval 获取活动检查间隔
+// 如果未配置，返回0
+func (t *transportImpl) getActivityCheckInterval() time.Duration {
+	if t.config.ActivityCheckInterval > 0 {
+		return t.config.ActivityCheckInterval
+	}
+	return 0
 }

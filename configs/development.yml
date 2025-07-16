@@ -1,0 +1,65 @@
+# Neo Framework 开发环境配置
+server:
+  name: "neo-gateway-dev"
+  version: "0.1.0"
+  startup_delay: 200          # 开发环境启动延迟稍长，便于调试
+  shutdown_timeout: 5         # 开发环境快速关闭
+
+# 传输层配置 - 开发环境优化
+transport:
+  timeout: 10s                # 开发环境超时时间较短，快速失败
+  retry_count: 1              # 开发环境减少重试次数
+  max_connections: 50         # 开发环境连接数较少
+  min_connections: 5          
+  max_idle_time: 2m           # 开发环境空闲时间较短
+  health_check_interval: 10s  # 开发环境健康检查更频繁
+  handshake_timeout: 2s       
+  activity_check_interval: 10s
+  connection_timeout: 10s     
+  dial_timeout: 10s           
+  initial_backoff: 50ms       
+  max_backoff: 2s             
+  multiplier: 2.0             
+
+# 服务注册中心配置 - 开发环境
+registry:
+  type: "inmemory"            # 开发环境使用内存存储
+  health_check_interval: 10s  
+  cleanup_interval: 5s        # 开发环境清理更频繁
+  instance_expiry: 1m         # 开发环境实例过期时间短
+  ttl: 15s                    
+  refresh_interval: 5s        
+
+# HTTP网关配置 - 开发环境
+gateway:
+  address: ":8080"            # 开发环境标准端口
+  read_timeout: 10s           
+  write_timeout: 10s          
+  max_header_bytes: 1048576   
+  request_timeout: 10s        
+
+# IPC服务器配置 - 开发环境
+ipc:
+  address: ":9999"            
+  max_clients: 100            # 开发环境客户端数量较少
+  buffer_size: 4096           
+  max_message_size: 5242880   # 开发环境消息大小限制5MB
+  read_timeout: 10s           
+  write_timeout: 10s          
+  response_timeout: 10s       
+
+# 日志配置 - 开发环境
+logging:
+  level: "debug"              # 开发环境使用debug级别
+  format: "text"              # 开发环境使用文本格式，便于阅读
+  output: "console"           
+  with_color: true            # 开发环境启用颜色
+  with_location: true         # 开发环境显示代码位置
+
+# 运行模式
+mode: "development"
+
+# 性能配置 - 开发环境
+performance:
+  buffer_size: 512            # 开发环境缓冲区较小
+  max_retries: 1              # 开发环境减少重试

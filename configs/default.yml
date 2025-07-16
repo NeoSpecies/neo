@@ -2,37 +2,64 @@
 server:
   name: "neo-gateway"
   version: "0.1.0"
+  startup_delay: 100          # 启动延迟（毫秒）
+  shutdown_timeout: 10        # 关闭超时（秒）
 
 # 传输层配置
 transport:
-  timeout: 30000              # 超时时间（毫秒）
+  timeout: 30s                # 超时时间
   retry_count: 3              # 重试次数
   max_connections: 100        # 最大连接数
   min_connections: 10         # 最小连接数
-  max_idle_time: 300000       # 最大空闲时间（毫秒）
-  health_check_interval: 30000 # 健康检查间隔（毫秒）
+  max_idle_time: 5m           # 最大空闲时间
+  health_check_interval: 30s  # 健康检查间隔
+  handshake_timeout: 3s       # 连接握手超时
+  activity_check_interval: 30s # 活动检查间隔
+  connection_timeout: 30s     # 连接超时
+  dial_timeout: 30s           # 拨号超时
+  initial_backoff: 100ms      # 初始退避时间
+  max_backoff: 5s             # 最大退避时间
+  multiplier: 2.0             # 退避倍数
 
 # 服务注册中心配置
 registry:
   type: "inmemory"            # 注册中心类型
-  health_check_interval: 30   # 健康检查间隔（秒）
+  health_check_interval: 30s  # 健康检查间隔
+  cleanup_interval: 10s       # 清理间隔
+  instance_expiry: 5m         # 实例过期时间
+  ttl: 30s                    # 服务TTL
+  refresh_interval: 10s       # 刷新间隔
 
 # HTTP网关配置
 gateway:
   address: ":8080"            # HTTP监听地址
-  read_timeout: 30            # 读取超时（秒）
-  write_timeout: 30           # 写入超时（秒）
+  read_timeout: 30s           # 读取超时
+  write_timeout: 30s          # 写入超时
+  max_header_bytes: 1048576   # 最大请求头大小（1MB）
+  request_timeout: 30s        # 请求处理超时
 
 # IPC服务器配置
 ipc:
   address: ":9999"            # IPC监听地址
   max_clients: 200            # 最大客户端连接数
+  buffer_size: 4096           # 缓冲区大小（字节）
+  max_message_size: 10485760  # 最大消息大小（10MB）
+  read_timeout: 30s           # 读取超时
+  write_timeout: 30s          # 写入超时
+  response_timeout: 30s       # 响应等待超时
 
 # 日志配置
 logging:
   level: "info"               # 日志级别: debug, info, warn, error
   format: "json"              # 日志格式: json, text
   output: "console"           # 输出目标: console, file
+  with_color: true            # 是否使用颜色
+  with_location: false        # 是否显示代码位置
 
 # 运行模式
 mode: "production"            # 运行模式: development, production, test
+
+# 性能配置
+performance:
+  buffer_size: 1024           # 默认缓冲区大小
+  max_retries: 3              # 最大重试次数

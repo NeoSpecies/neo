@@ -32,6 +32,12 @@ type IPCMessage struct {
 	Metadata map[string]string
 }
 
+// IPCConfig IPC服务器配置
+type IPCConfig struct {
+	MaxMessageSize int // 最大消息大小
+	BufferSize     int // 缓冲区大小
+}
+
 // IPCServer IPC服务器，处理进程间通信
 type IPCServer struct {
 	addr         string
@@ -41,6 +47,7 @@ type IPCServer struct {
 	handlers     sync.Map // service -> net.Conn
 	mu           sync.RWMutex
 	asyncHandler ResponseHandler // 异步响应处理器
+	config       IPCConfig      // IPC配置
 }
 
 // ResponseHandler 响应处理接口
@@ -57,9 +64,18 @@ type IPCClient struct {
 
 // NewIPCServer 创建新的IPC服务器
 func NewIPCServer(addr string, registry registry.ServiceRegistry) *IPCServer {
+	return NewIPCServerWithConfig(addr, registry, IPCConfig{
+		MaxMessageSize: 10 * 1024 * 1024, // 默认10MB
+		BufferSize:     4096,              // 默认4KB
+	})
+}
+
+// NewIPCServerWithConfig 创建带配置的IPC服务器
+func NewIPCServerWithConfig(addr string, registry registry.ServiceRegistry, config IPCConfig) *IPCServer {
 	return &IPCServer{
 		addr:     addr,
 		registry: registry,
+		config:   config,
 		// handlers 和 clients 会在首次使用时自动初始化（sync.Map 的零值是可用的）
 	}
 }
@@ -261,9 +277,9 @@ func (s *IPCServer) readMessage(conn net.Conn) (*IPCMessage, error) {
 	fmt.Printf("readMessage: Message length: %d bytes\n", msgLen)
 	
 	// 验证消息长度合理性
-	if msgLen > 1024*1024 { // 1MB limit
-		fmt.Printf("readMessage: Message too large: %d bytes\n", msgLen)
-		return nil, fmt.Errorf("message too large: %d bytes", msgLen)
+	if msgLen > uint32(s.config.MaxMessageSize) {
+		fmt.Printf("readMessage: Message too large: %d bytes (max: %d)\n", msgLen, s.config.MaxMessageSize)
+		return nil, fmt.Errorf("message too large: %d bytes (max: %d)", msgLen, s.config.MaxMessageSize)
 	}
 
 	// 读取消息内容

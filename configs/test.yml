@@ -1,0 +1,65 @@
+# Neo Framework 测试环境配置
+server:
+  name: "neo-gateway-test"
+  version: "0.1.0"
+  startup_delay: 10           # 测试环境极快启动
+  shutdown_timeout: 2         # 测试环境快速关闭
+
+# 传输层配置 - 测试环境优化
+transport:
+  timeout: 5s                 # 测试环境超时时间短
+  retry_count: 0              # 测试环境不重试
+  max_connections: 10         # 测试环境小连接池
+  min_connections: 1          
+  max_idle_time: 30s          # 测试环境短空闲时间
+  health_check_interval: 5s   # 测试环境频繁健康检查
+  handshake_timeout: 1s       
+  activity_check_interval: 5s 
+  connection_timeout: 5s      
+  dial_timeout: 5s            
+  initial_backoff: 10ms       
+  max_backoff: 100ms          
+  multiplier: 1.5             
+
+# 服务注册中心配置 - 测试环境
+registry:
+  type: "inmemory"            
+  health_check_interval: 5s   
+  cleanup_interval: 2s        # 测试环境快速清理
+  instance_expiry: 30s        # 测试环境快速过期
+  ttl: 10s                    
+  refresh_interval: 2s        
+
+# HTTP网关配置 - 测试环境
+gateway:
+  address: ":18080"           # 测试环境使用不同端口避免冲突
+  read_timeout: 5s            
+  write_timeout: 5s           
+  max_header_bytes: 524288    # 测试环境512KB限制
+  request_timeout: 5s         
+
+# IPC服务器配置 - 测试环境
+ipc:
+  address: ":19999"           # 测试环境使用不同端口
+  max_clients: 50             # 测试环境少量客户端
+  buffer_size: 2048           
+  max_message_size: 1048576   # 测试环境1MB消息限制
+  read_timeout: 5s            
+  write_timeout: 5s           
+  response_timeout: 5s        
+
+# 日志配置 - 测试环境
+logging:
+  level: "debug"              # 测试环境使用debug级别
+  format: "text"              # 测试环境使用文本格式
+  output: "console"           
+  with_color: false           # 测试环境不使用颜色（CI环境）
+  with_location: true         # 测试环境显示代码位置
+
+# 运行模式
+mode: "test"
+
+# 性能配置 - 测试环境
+performance:
+  buffer_size: 256            # 测试环境小缓冲区
+  max_retries: 0              # 测试环境不重试

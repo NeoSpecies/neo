@@ -30,14 +30,17 @@ type ServiceRegistry interface {
 
 // inMemoryRegistry 内存实现的服务注册中心
 type inMemoryRegistry struct {
-	mu              sync.RWMutex
-	services        map[string]map[string]*ServiceInstance // serviceName -> instanceID -> instance
-	instances       map[string]*ServiceInstance            // instanceID -> instance
-	watchers        map[string][]chan ServiceEvent        // serviceName -> watchers
-	logger          utils.Logger
-	healthCheckFunc HealthCheckFunc
-	stopCh          chan struct{}
-	wg              sync.WaitGroup
+	mu                  sync.RWMutex
+	services            map[string]map[string]*ServiceInstance // serviceName -> instanceID -> instance
+	instances           map[string]*ServiceInstance            // instanceID -> instance
+	watchers            map[string][]chan ServiceEvent        // serviceName -> watchers
+	logger              utils.Logger
+	healthCheckFunc     HealthCheckFunc
+	stopCh              chan struct{}
+	wg                  sync.WaitGroup
+	cleanupInterval     time.Duration // 清理间隔
+	instanceExpiry      time.Duration // 实例过期时间
+	healthCheckInterval time.Duration // 健康检查间隔
 }
 
 // HealthCheckFunc 健康检查函数类型
@@ -60,14 +63,39 @@ func WithHealthCheckFunc(fn HealthCheckFunc) RegistryOption {
 	}
 }
 
+// RegistryConfig 注册中心配置
+type RegistryConfig struct {
+	CleanupInterval     time.Duration
+	InstanceExpiry      time.Duration
+	HealthCheckInterval time.Duration
+}
+
+// WithConfig 设置配置
+func WithConfig(config RegistryConfig) RegistryOption {
+	return func(r *inMemoryRegistry) {
+		if config.CleanupInterval > 0 {
+			r.cleanupInterval = config.CleanupInterval
+		}
+		if config.InstanceExpiry > 0 {
+			r.instanceExpiry = config.InstanceExpiry
+		}
+		if config.HealthCheckInterval > 0 {
+			r.healthCheckInterval = config.HealthCheckInterval
+		}
+	}
+}
+
 // NewServiceRegistry 创建新的服务注册中心实例
 func NewServiceRegistry(opts ...RegistryOption) ServiceRegistry {
 	r := &inMemoryRegistry{
-		services:  make(map[string]map[string]*ServiceInstance),
-		instances: make(map[string]*ServiceInstance),
-		watchers:  make(map[string][]chan ServiceEvent),
-		logger:    utils.DefaultLogger,
-		stopCh:    make(chan struct{}),
+		services:            make(map[string]map[string]*ServiceInstance),
+		instances:           make(map[string]*ServiceInstance),
+		watchers:            make(map[string][]chan ServiceEvent),
+		logger:              utils.DefaultLogger,
+		stopCh:              make(chan struct{}),
+		cleanupInterval:     10 * time.Second, // 默认值
+		instanceExpiry:      5 * time.Minute,  // 默认值
+		healthCheckInterval: 30 * time.Second, // 默认值
 	}
 	
 	for _, opt := range opts {
@@ -376,7 +404,7 @@ func (r *inMemoryRegistry) startHealthChecker() {
 	go func() {
 		defer r.wg.Done()
 		
-		ticker := time.NewTicker(10 * time.Second)
+		ticker := time.NewTicker(r.cleanupInterval)
 		defer ticker.Stop()
 		
 		for {
@@ -401,8 +429,8 @@ func (r *inMemoryRegistry) checkInstanceHealth() {
 	
 	now := time.Now()
 	for _, instance := range instances {
-		// 检查心跳超时（临时延长到5分钟用于测试）
-		if now.Sub(instance.LastHeartbeat) > 5*time.Minute {
+		// 检查心跳超时
+		if now.Sub(instance.LastHeartbeat) > r.instanceExpiry {
 			r.updateInstanceStatus(instance, StatusUnhealthy)
 		}
 	}

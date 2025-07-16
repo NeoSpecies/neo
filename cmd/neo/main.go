@@ -19,7 +19,7 @@ import (
 
 // Application Neo Framework应用程序
 type Application struct {
-	config         config.Config
+	config         *config.Config
 	options        ApplicationOptions
 	logger         utils.Logger
 	registry       registry.ServiceRegistry
@@ -77,8 +77,8 @@ func parseCommandLine() ApplicationOptions {
 	
 	flag.StringVar(&opts.ConfigPath, "config", "configs/default.yml", "配置文件路径")
 	flag.StringVar(&opts.LogLevel, "log", "info", "日志级别 (debug, info, warn, error)")
-	flag.StringVar(&opts.HTTPPort, "http", ":28080", "HTTP网关端口")
-	flag.StringVar(&opts.IPCPort, "ipc", ":29999", "IPC服务器端口")
+	flag.StringVar(&opts.HTTPPort, "http", "", "HTTP网关端口 (默认使用配置文件)")
+	flag.StringVar(&opts.IPCPort, "ipc", "", "IPC服务器端口 (默认使用配置文件)")
 	
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Neo Framework - 高性能微服务通信框架\n\n")
@@ -109,16 +109,26 @@ func NewApplication(opts ApplicationOptions) (*Application, error) {
 	app.shutdownCtx, app.shutdownCancel = context.WithCancel(context.Background())
 	
 	// 加载配置
-	app.config = config.Config{
-		Transport: config.TransportConfig{
-			Timeout:         config.Duration(30 * time.Second),
-			RetryCount:      3,
-			MaxConnections:  100,
-			MinConnections:  10,
-			MaxIdleTime:     config.Duration(300 * time.Second),
-		},
+	cfg, err := config.LoadFromFile(opts.ConfigPath)
+	if err != nil {
+		app.logger.Warn("Failed to load config file, using defaults", 
+			utils.String("error", err.Error()),
+			utils.String("path", opts.ConfigPath))
+		cfg = config.DefaultConfig()
 	}
 	
+	// 应用命令行参数覆盖
+	if opts.HTTPPort != "" {
+		cfg.Gateway.Address = opts.HTTPPort
+	}
+	if opts.IPCPort != "" {
+		cfg.IPC.Address = opts.IPCPort
+	}
+	if opts.LogLevel != "" {
+		cfg.Log.Level = opts.LogLevel
+	}
+	
+	app.config = cfg
 	app.logger.Info("Configuration loaded successfully")
 	return app, nil
 }
@@ -128,15 +138,36 @@ func (app *Application) Initialize() error {
 	app.logger.Info("Initializing Neo Framework components...")
 	
 	// 1. 创建服务注册中心
-	app.registry = registry.NewServiceRegistry(registry.WithLogger(app.logger))
+	registryConfig := registry.RegistryConfig{
+		CleanupInterval:     time.Duration(app.config.Registry.CleanupInterval),
+		InstanceExpiry:      time.Duration(app.config.Registry.InstanceExpiry),
+		HealthCheckInterval: time.Duration(app.config.Registry.HealthCheckInterval),
+	}
+	app.registry = registry.NewServiceRegistry(
+		registry.WithLogger(app.logger),
+		registry.WithConfig(registryConfig),
+	)
 	app.logger.Info("Service registry initialized")
 	
 	// 2. 创建传输层
-	app.transport = transport.NewTransport(app.config)
+	transportConfig := transport.Config{
+		Timeout:               time.Duration(app.config.Transport.Timeout),
+		RetryCount:            app.config.Transport.RetryCount,
+		MaxConnections:        app.config.Transport.MaxConnections,
+		MinConnections:        app.config.Transport.MinConnections,
+		MaxIdleTime:           time.Duration(app.config.Transport.MaxIdleTime),
+		HealthCheckInterval:   time.Duration(app.config.Transport.HealthCheckInterval),
+		ActivityCheckInterval: time.Duration(app.config.Transport.ActivityCheckInterval),
+	}
+	app.transport = transport.NewTransport(transportConfig)
 	app.logger.Info("Transport layer initialized")
 	
 	// 3. 创建IPC服务器
-	app.ipcServer = ipc.NewIPCServer(app.options.IPCPort, app.registry)
+	ipcConfig := ipc.IPCConfig{
+		MaxMessageSize: app.config.IPC.MaxMessageSize,
+		BufferSize:     app.config.IPC.BufferSize,
+	}
+	app.ipcServer = ipc.NewIPCServerWithConfig(app.config.IPC.Address, app.registry, ipcConfig)
 	app.logger.Info("IPC server initialized")
 	
 	// 4. 创建异步IPC服务器
@@ -145,10 +176,10 @@ func (app *Application) Initialize() error {
 	
 	// 5. 创建核心服务
 	serviceOpts := core.ServiceOptions{
-		Name:      "neo-gateway",
+		Name:      app.config.Server.Name,
 		Transport: app.transport,
 		Registry:  app.registry,
-		Timeout:   30 * time.Second,
+		Timeout:   time.Duration(app.config.Transport.Timeout),
 		Logger:    app.logger,
 		AsyncIPC:  app.asyncIPC, // 添加AsyncIPC引用
 	}
@@ -156,7 +187,7 @@ func (app *Application) Initialize() error {
 	app.logger.Info("Core service initialized")
 	
 	// 6. 创建HTTP网关
-	app.httpGateway = gateway.NewHTTPGateway(app.coreService, app.registry, app.options.HTTPPort)
+	app.httpGateway = gateway.NewHTTPGateway(app.coreService, app.registry, app.config.Gateway.Address)
 	app.logger.Info("HTTP gateway initialized")
 	
 	app.logger.Info("All components initialized successfully")
@@ -171,7 +202,7 @@ func (app *Application) Start() error {
 	if err := app.ipcServer.Start(); err != nil {
 		return fmt.Errorf("failed to start IPC server: %w", err)
 	}
-	app.logger.Info("IPC server started", utils.String("address", ":29999"))
+	app.logger.Info("IPC server started", utils.String("address", app.config.IPC.Address))
 	
 	// 2. 启动传输层监听器
 	go func() {
@@ -189,20 +220,20 @@ func (app *Application) Start() error {
 	}()
 	
 	// 等待服务启动
-	time.Sleep(200 * time.Millisecond)
+	time.Sleep(time.Duration(app.config.Server.StartupDelay))
 	
 	// 启动成功日志
 	app.logger.Info("🚀 Neo Framework started successfully!")
-	app.logger.Info("📡 HTTP Gateway: http://localhost" + app.options.HTTPPort)
-	app.logger.Info("🔌 IPC Server: localhost" + app.options.IPCPort)
-	app.logger.Info("💚 Health Check: http://localhost" + app.options.HTTPPort + "/health")
-	app.logger.Info("📖 API Endpoint: http://localhost" + app.options.HTTPPort + "/api/{service}/{method}")
+	app.logger.Info("📡 HTTP Gateway: http://localhost" + app.config.Gateway.Address)
+	app.logger.Info("🔌 IPC Server: localhost" + app.config.IPC.Address)
+	app.logger.Info("💚 Health Check: http://localhost" + app.config.Gateway.Address + "/health")
+	app.logger.Info("📖 API Endpoint: http://localhost" + app.config.Gateway.Address + "/api/{service}/{method}")
 	
 	fmt.Println("\n=== 服务启动成功 ===")
-	fmt.Printf("HTTP网关: http://localhost%s\n", app.options.HTTPPort)
-	fmt.Printf("IPC服务器: localhost%s\n", app.options.IPCPort)
-	fmt.Printf("健康检查: http://localhost%s/health\n", app.options.HTTPPort)
-	fmt.Printf("API接口: http://localhost%s/api/{service}/{method}\n", app.options.HTTPPort)
+	fmt.Printf("HTTP网关: http://localhost%s\n", app.config.Gateway.Address)
+	fmt.Printf("IPC服务器: localhost%s\n", app.config.IPC.Address)
+	fmt.Printf("健康检查: http://localhost%s/health\n", app.config.Gateway.Address)
+	fmt.Printf("API接口: http://localhost%s/api/{service}/{method}\n", app.config.Gateway.Address)
 	fmt.Println("\n按 Ctrl+C 停止服务")
 	
 	return nil
@@ -227,7 +258,7 @@ func (app *Application) Shutdown() {
 	app.logger.Info("Starting graceful shutdown...")
 	
 	// 创建关闭超时上下文
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(app.config.Server.ShutdownTimeout))
 	defer cancel()
 	
 	// 1. 停止HTTP网关

@@ -1,0 +1,65 @@
+# Neo Framework 生产环境配置
+server:
+  name: "neo-gateway"
+  version: "0.1.0"
+  startup_delay: 50           # 生产环境快速启动
+  shutdown_timeout: 30        # 生产环境优雅关闭时间长
+
+# 传输层配置 - 生产环境优化
+transport:
+  timeout: 30s                # 生产环境超时时间适中
+  retry_count: 3              # 生产环境标准重试次数
+  max_connections: 200        # 生产环境大连接池
+  min_connections: 20         
+  max_idle_time: 10m          # 生产环境长空闲时间
+  health_check_interval: 30s  # 生产环境健康检查间隔适中
+  handshake_timeout: 5s       
+  activity_check_interval: 60s # 生产环境活动检查间隔长
+  connection_timeout: 30s     
+  dial_timeout: 30s           
+  initial_backoff: 100ms      
+  max_backoff: 10s            
+  multiplier: 2.0             
+
+# 服务注册中心配置 - 生产环境
+registry:
+  type: "inmemory"            # 生产环境可以考虑使用etcd或consul
+  health_check_interval: 30s  
+  cleanup_interval: 30s       # 生产环境清理间隔长
+  instance_expiry: 10m        # 生产环境实例过期时间长
+  ttl: 60s                    
+  refresh_interval: 20s       
+
+# HTTP网关配置 - 生产环境
+gateway:
+  address: ":8080"            # 生产环境可通过环境变量覆盖
+  read_timeout: 30s           
+  write_timeout: 30s          
+  max_header_bytes: 2097152   # 生产环境2MB请求头限制
+  request_timeout: 30s        
+
+# IPC服务器配置 - 生产环境
+ipc:
+  address: ":9999"            # 生产环境可通过环境变量覆盖
+  max_clients: 500            # 生产环境支持更多客户端
+  buffer_size: 8192           # 生产环境大缓冲区
+  max_message_size: 10485760  # 生产环境10MB消息限制
+  read_timeout: 30s           
+  write_timeout: 30s          
+  response_timeout: 30s       
+
+# 日志配置 - 生产环境
+logging:
+  level: "info"               # 生产环境使用info级别
+  format: "json"              # 生产环境使用JSON格式，便于日志收集
+  output: "console"           # 生产环境可配置为文件输出
+  with_color: false           # 生产环境关闭颜色
+  with_location: false        # 生产环境不显示代码位置
+
+# 运行模式
+mode: "production"
+
+# 性能配置 - 生产环境
+performance:
+  buffer_size: 2048           # 生产环境大缓冲区
+  max_retries: 3              # 生产环境标准重试次数

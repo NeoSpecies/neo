@@ -66,24 +66,31 @@ func (d Duration) MarshalYAML() (interface{}, error) {
 
 // TransportConfig 传输层配置
 type TransportConfig struct {
-	Timeout         Duration          `yaml:"timeout" json:"timeout" env:"NEO_TRANSPORT_TIMEOUT"`
-	RetryCount      int               `yaml:"retry_count" json:"retry_count" env:"NEO_TRANSPORT_RETRY_COUNT"`
-	MaxConnections  int               `yaml:"max_connections" json:"max_connections" env:"NEO_TRANSPORT_MAX_CONNECTIONS"`
-	MinConnections  int               `yaml:"min_connections" json:"min_connections" env:"NEO_TRANSPORT_MIN_CONNECTIONS"`
-	MaxIdleTime     Duration          `yaml:"max_idle_time" json:"max_idle_time" env:"NEO_TRANSPORT_MAX_IDLE_TIME"`
-	HealthCheckInterval Duration      `yaml:"health_check_interval" json:"health_check_interval" env:"NEO_TRANSPORT_HEALTH_CHECK_INTERVAL"`
-	InitialBackoff  Duration          `yaml:"initial_backoff" json:"initial_backoff" env:"NEO_TRANSPORT_INITIAL_BACKOFF"`
-	MaxBackoff      Duration          `yaml:"max_backoff" json:"max_backoff" env:"NEO_TRANSPORT_MAX_BACKOFF"`
-	Multiplier      float64           `yaml:"multiplier" json:"multiplier" env:"NEO_TRANSPORT_MULTIPLIER"`
+	Timeout              Duration `yaml:"timeout" json:"timeout" env:"NEO_TRANSPORT_TIMEOUT"`
+	RetryCount           int      `yaml:"retry_count" json:"retry_count" env:"NEO_TRANSPORT_RETRY_COUNT"`
+	MaxConnections       int      `yaml:"max_connections" json:"max_connections" env:"NEO_TRANSPORT_MAX_CONNECTIONS"`
+	MinConnections       int      `yaml:"min_connections" json:"min_connections" env:"NEO_TRANSPORT_MIN_CONNECTIONS"`
+	MaxIdleTime          Duration `yaml:"max_idle_time" json:"max_idle_time" env:"NEO_TRANSPORT_MAX_IDLE_TIME"`
+	HealthCheckInterval  Duration `yaml:"health_check_interval" json:"health_check_interval" env:"NEO_TRANSPORT_HEALTH_CHECK_INTERVAL"`
+	HandshakeTimeout     Duration `yaml:"handshake_timeout" json:"handshake_timeout" env:"NEO_TRANSPORT_HANDSHAKE_TIMEOUT"`
+	ActivityCheckInterval Duration `yaml:"activity_check_interval" json:"activity_check_interval" env:"NEO_TRANSPORT_ACTIVITY_CHECK_INTERVAL"`
+	ConnectionTimeout    Duration `yaml:"connection_timeout" json:"connection_timeout" env:"NEO_TRANSPORT_CONNECTION_TIMEOUT"`
+	DialTimeout          Duration `yaml:"dial_timeout" json:"dial_timeout" env:"NEO_TRANSPORT_DIAL_TIMEOUT"`
+	InitialBackoff       Duration `yaml:"initial_backoff" json:"initial_backoff" env:"NEO_TRANSPORT_INITIAL_BACKOFF"`
+	MaxBackoff           Duration `yaml:"max_backoff" json:"max_backoff" env:"NEO_TRANSPORT_MAX_BACKOFF"`
+	Multiplier           float64  `yaml:"multiplier" json:"multiplier" env:"NEO_TRANSPORT_MULTIPLIER"`
 }
 
 // RegistryConfig 注册中心配置
 type RegistryConfig struct {
-	Type            string   `yaml:"type" json:"type" env:"NEO_REGISTRY_TYPE"`
-	Address         string   `yaml:"address" json:"address" env:"NEO_REGISTRY_ADDRESS"`
-	Namespace       string   `yaml:"namespace" json:"namespace" env:"NEO_REGISTRY_NAMESPACE"`
-	TTL             Duration `yaml:"ttl" json:"ttl" env:"NEO_REGISTRY_TTL"`
-	RefreshInterval Duration `yaml:"refresh_interval" json:"refresh_interval" env:"NEO_REGISTRY_REFRESH_INTERVAL"`
+	Type               string   `yaml:"type" json:"type" env:"NEO_REGISTRY_TYPE"`
+	Address            string   `yaml:"address" json:"address" env:"NEO_REGISTRY_ADDRESS"`
+	Namespace          string   `yaml:"namespace" json:"namespace" env:"NEO_REGISTRY_NAMESPACE"`
+	HealthCheckInterval Duration `yaml:"health_check_interval" json:"health_check_interval" env:"NEO_REGISTRY_HEALTH_CHECK_INTERVAL"`
+	CleanupInterval    Duration `yaml:"cleanup_interval" json:"cleanup_interval" env:"NEO_REGISTRY_CLEANUP_INTERVAL"`
+	InstanceExpiry     Duration `yaml:"instance_expiry" json:"instance_expiry" env:"NEO_REGISTRY_INSTANCE_EXPIRY"`
+	TTL                Duration `yaml:"ttl" json:"ttl" env:"NEO_REGISTRY_TTL"`
+	RefreshInterval    Duration `yaml:"refresh_interval" json:"refresh_interval" env:"NEO_REGISTRY_REFRESH_INTERVAL"`
 }
 
 // GatewayConfig HTTP网关配置
@@ -92,16 +99,19 @@ type GatewayConfig struct {
 	ReadTimeout     Duration `yaml:"read_timeout" json:"read_timeout" env:"NEO_GATEWAY_READ_TIMEOUT"`
 	WriteTimeout    Duration `yaml:"write_timeout" json:"write_timeout" env:"NEO_GATEWAY_WRITE_TIMEOUT"`
 	MaxHeaderBytes  int      `yaml:"max_header_bytes" json:"max_header_bytes" env:"NEO_GATEWAY_MAX_HEADER_BYTES"`
+	RequestTimeout  Duration `yaml:"request_timeout" json:"request_timeout" env:"NEO_GATEWAY_REQUEST_TIMEOUT"`
 	ShutdownTimeout Duration `yaml:"shutdown_timeout" json:"shutdown_timeout" env:"NEO_GATEWAY_SHUTDOWN_TIMEOUT"`
 }
 
 // IPCConfig IPC配置
 type IPCConfig struct {
-	Address      string   `yaml:"address" json:"address" env:"NEO_IPC_ADDRESS"`
-	MaxClients   int      `yaml:"max_clients" json:"max_clients" env:"NEO_IPC_MAX_CLIENTS"`
-	BufferSize   int      `yaml:"buffer_size" json:"buffer_size" env:"NEO_IPC_BUFFER_SIZE"`
-	ReadTimeout  Duration `yaml:"read_timeout" json:"read_timeout" env:"NEO_IPC_READ_TIMEOUT"`
-	WriteTimeout Duration `yaml:"write_timeout" json:"write_timeout" env:"NEO_IPC_WRITE_TIMEOUT"`
+	Address         string   `yaml:"address" json:"address" env:"NEO_IPC_ADDRESS"`
+	MaxClients      int      `yaml:"max_clients" json:"max_clients" env:"NEO_IPC_MAX_CLIENTS"`
+	BufferSize      int      `yaml:"buffer_size" json:"buffer_size" env:"NEO_IPC_BUFFER_SIZE"`
+	MaxMessageSize  int      `yaml:"max_message_size" json:"max_message_size" env:"NEO_IPC_MAX_MESSAGE_SIZE"`
+	ReadTimeout     Duration `yaml:"read_timeout" json:"read_timeout" env:"NEO_IPC_READ_TIMEOUT"`
+	WriteTimeout    Duration `yaml:"write_timeout" json:"write_timeout" env:"NEO_IPC_WRITE_TIMEOUT"`
+	ResponseTimeout Duration `yaml:"response_timeout" json:"response_timeout" env:"NEO_IPC_RESPONSE_TIMEOUT"`
 }
 
 // LogConfig 日志配置
@@ -113,50 +123,82 @@ type LogConfig struct {
 	WithLocation bool `yaml:"with_location" json:"with_location" env:"NEO_LOG_WITH_LOCATION"`
 }
 
+// ServerConfig 服务器配置
+type ServerConfig struct {
+	Name            string   `yaml:"name" json:"name" env:"NEO_SERVER_NAME"`
+	Version         string   `yaml:"version" json:"version" env:"NEO_SERVER_VERSION"`
+	StartupDelay    Duration `yaml:"startup_delay" json:"startup_delay" env:"NEO_SERVER_STARTUP_DELAY"`
+	ShutdownTimeout Duration `yaml:"shutdown_timeout" json:"shutdown_timeout" env:"NEO_SERVER_SHUTDOWN_TIMEOUT"`
+}
+
+// PerformanceConfig 性能配置
+type PerformanceConfig struct {
+	BufferSize  int `yaml:"buffer_size" json:"buffer_size" env:"NEO_PERFORMANCE_BUFFER_SIZE"`
+	MaxRetries  int `yaml:"max_retries" json:"max_retries" env:"NEO_PERFORMANCE_MAX_RETRIES"`
+}
+
 // Config 主配置结构
 type Config struct {
-	Transport TransportConfig `yaml:"transport" json:"transport"`
-	Registry  RegistryConfig  `yaml:"registry" json:"registry"`
-	Gateway   GatewayConfig   `yaml:"gateway" json:"gateway"`
-	IPC       IPCConfig       `yaml:"ipc" json:"ipc"`
-	Log       LogConfig       `yaml:"log" json:"log"`
-	Mode      string          `yaml:"mode" json:"mode" env:"NEO_MODE"` // debug/release/test
+	Server      ServerConfig      `yaml:"server" json:"server"`
+	Transport   TransportConfig   `yaml:"transport" json:"transport"`
+	Registry    RegistryConfig    `yaml:"registry" json:"registry"`
+	Gateway     GatewayConfig     `yaml:"gateway" json:"gateway"`
+	IPC         IPCConfig         `yaml:"ipc" json:"ipc"`
+	Log         LogConfig         `yaml:"log" json:"log"`
+	Performance PerformanceConfig `yaml:"performance" json:"performance"`
+	Mode        string            `yaml:"mode" json:"mode" env:"NEO_MODE"` // development/production/test
 }
 
 // DefaultConfig 返回默认配置
 func DefaultConfig() *Config {
 	return &Config{
+		Server: ServerConfig{
+			Name:            "neo-gateway",
+			Version:         "0.1.0",
+			StartupDelay:    Duration(100 * time.Millisecond),
+			ShutdownTimeout: Duration(10 * time.Second),
+		},
 		Transport: TransportConfig{
-			Timeout:             Duration(30 * time.Second),
-			RetryCount:          3,
-			MaxConnections:      100,
-			MinConnections:      10,
-			MaxIdleTime:         Duration(5 * time.Minute),
-			HealthCheckInterval: Duration(30 * time.Second),
-			InitialBackoff:      Duration(100 * time.Millisecond),
-			MaxBackoff:          Duration(5 * time.Second),
-			Multiplier:          2.0,
+			Timeout:              Duration(30 * time.Second),
+			RetryCount:           3,
+			MaxConnections:       100,
+			MinConnections:       10,
+			MaxIdleTime:          Duration(5 * time.Minute),
+			HealthCheckInterval:  Duration(30 * time.Second),
+			HandshakeTimeout:     Duration(3 * time.Second),
+			ActivityCheckInterval: Duration(30 * time.Second),
+			ConnectionTimeout:    Duration(30 * time.Second),
+			DialTimeout:          Duration(30 * time.Second),
+			InitialBackoff:       Duration(100 * time.Millisecond),
+			MaxBackoff:           Duration(5 * time.Second),
+			Multiplier:           2.0,
 		},
 		Registry: RegistryConfig{
-			Type:            "inmemory",
-			Address:         "",
-			Namespace:       "default",
-			TTL:             Duration(30 * time.Second),
-			RefreshInterval: Duration(10 * time.Second),
+			Type:               "inmemory",
+			Address:            "",
+			Namespace:          "default",
+			HealthCheckInterval: Duration(30 * time.Second),
+			CleanupInterval:    Duration(10 * time.Second),
+			InstanceExpiry:     Duration(5 * time.Minute),
+			TTL:                Duration(30 * time.Second),
+			RefreshInterval:    Duration(10 * time.Second),
 		},
 		Gateway: GatewayConfig{
 			Address:         ":8080",
 			ReadTimeout:     Duration(30 * time.Second),
 			WriteTimeout:    Duration(30 * time.Second),
 			MaxHeaderBytes:  1 << 20, // 1MB
+			RequestTimeout:  Duration(30 * time.Second),
 			ShutdownTimeout: Duration(10 * time.Second),
 		},
 		IPC: IPCConfig{
-			Address:      ":9999",
-			MaxClients:   1000,
-			BufferSize:   4096,
-			ReadTimeout:  Duration(30 * time.Second),
-			WriteTimeout: Duration(30 * time.Second),
+			Address:         ":9999",
+			MaxClients:      1000,
+			BufferSize:      4096,
+			MaxMessageSize:  10 * 1024 * 1024, // 10MB
+			ReadTimeout:     Duration(30 * time.Second),
+			WriteTimeout:    Duration(30 * time.Second),
+			ResponseTimeout: Duration(30 * time.Second),
 		},
 		Log: LogConfig{
 			Level:        "info",
@@ -165,7 +207,11 @@ func DefaultConfig() *Config {
 			WithColor:    true,
 			WithLocation: false,
 		},
-		Mode: "debug",
+		Performance: PerformanceConfig{
+			BufferSize: 1024,
+			MaxRetries: 3,
+		},
+		Mode: "production",
 	}
 }
 
@@ -198,9 +244,25 @@ func (c *Config) Validate() error {
 	}
 
 	// 验证模式
-	validModes := map[string]bool{"debug": true, "release": true, "test": true}
+	validModes := map[string]bool{"development": true, "production": true, "test": true}
 	if !validModes[c.Mode] {
 		return fmt.Errorf("invalid mode: %s", c.Mode)
+	}
+
+	// 验证IPC配置
+	if c.IPC.BufferSize <= 0 {
+		return fmt.Errorf("ipc buffer size must be positive")
+	}
+	if c.IPC.MaxMessageSize <= 0 {
+		return fmt.Errorf("ipc max message size must be positive")
+	}
+
+	// 验证性能配置
+	if c.Performance.BufferSize <= 0 {
+		return fmt.Errorf("performance buffer size must be positive")
+	}
+	if c.Performance.MaxRetries < 0 {
+		return fmt.Errorf("performance max retries cannot be negative")
 	}
 
 	return nil

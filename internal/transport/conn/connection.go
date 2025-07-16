@@ -29,14 +29,15 @@ type Connection interface {
 
 // TCPConnection TCP连接实现
 type TCPConnection struct {
-	id            string
-	conn          net.Conn
-	readTimeout   time.Duration
-	writeTimeout  time.Duration
-	lastActivity  time.Time
-	mu            sync.RWMutex
-	closed        bool
-	healthChecker HealthChecker
+	id                    string
+	conn                  net.Conn
+	readTimeout           time.Duration
+	writeTimeout          time.Duration
+	lastActivity          time.Time
+	mu                    sync.RWMutex
+	closed                bool
+	healthChecker         HealthChecker
+	activityCheckInterval time.Duration
 }
 
 // HealthChecker 健康检查接口
@@ -72,12 +73,13 @@ func (d *DefaultHealthChecker) Check(conn Connection) error {
 // NewTCPConnection 创建TCP连接
 func NewTCPConnection(conn net.Conn, id string, readTimeout, writeTimeout time.Duration) *TCPConnection {
 	return &TCPConnection{
-		id:            id,
-		conn:          conn,
-		readTimeout:   readTimeout,
-		writeTimeout:  writeTimeout,
-		lastActivity:  time.Now(),
-		healthChecker: &DefaultHealthChecker{},
+		id:                    id,
+		conn:                  conn,
+		readTimeout:           readTimeout,
+		writeTimeout:          writeTimeout,
+		lastActivity:          time.Now(),
+		healthChecker:         &DefaultHealthChecker{},
+		activityCheckInterval: 30 * time.Second, // 默认值
 	}
 }
 
@@ -177,7 +179,7 @@ func (c *TCPConnection) IsHealthy() bool {
 	}
 	
 	// 检查最后活动时间
-	if time.Since(c.lastActivity) > 30*time.Second {
+	if time.Since(c.lastActivity) > c.activityCheckInterval {
 		// 执行健康检查
 		if c.healthChecker != nil {
 			if err := c.healthChecker.Check(c); err != nil {
@@ -222,4 +224,11 @@ func (c *TCPConnection) SetHealthChecker(checker HealthChecker) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.healthChecker = checker
+}
+
+// SetActivityCheckInterval 设置活动检查间隔
+func (c *TCPConnection) SetActivityCheckInterval(interval time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.activityCheckInterval = interval
 }
