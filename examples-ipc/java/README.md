@@ -1,6 +1,7 @@
-# Java IPC 客户端示例
+# Java IPC Service Example
 
 这是一个 Java 的 IPC 客户端示例，展示如何连接到 Neo Framework。
+This example demonstrates how to create an IPC service using Java for the Neo Framework.
 
 ## 运行要求
 
@@ -13,20 +14,24 @@
 
 ```bash
 # 下载 Gson (如果没有)
-curl -L https://repo1.maven.org/maven2/com/google/code/gson/gson/2.8.9/gson-2.8.9.jar -o gson-2.8.9.jar
+# Windows: 运行 setup.bat 自动下载和编译
+setup.bat
+
+# 或手动下载:
+curl -L https://repo1.maven.org/maven2/com/google/code/gson/gson/2.10.1/gson-2.10.1.jar -o gson-2.10.1.jar
 ```
 
 ### 2. 编译和运行
 
 ```bash
 # 编译
-javac -cp ".:gson-2.8.9.jar" Service.java
+javac -cp "gson-2.10.1.jar" Service.java
 
 # 运行 (Linux/Mac)
-java -cp ".:gson-2.8.9.jar" Service
+java -cp ".:gson-2.10.1.jar" Service
 
 # 运行 (Windows)
-java -cp ".;gson-2.8.9.jar" Service
+java -cp ".;gson-2.10.1.jar" Service
 ```
 
 ## 环境变量配置
@@ -43,27 +48,27 @@ export NEO_IPC_PORT=9999
 
 ```bash
 # 测试 hello
-curl -X POST http://localhost:8080/api/demo-service/hello \
+curl -X POST http://localhost:8080/api/demo-service-java/hello \
   -H "Content-Type: application/json" \
   -d '{"name": "Java"}'
 
 # 测试计算
-curl -X POST http://localhost:8080/api/demo-service/calculate \
+curl -X POST http://localhost:8080/api/demo-service-java/calculate \
   -H "Content-Type: application/json" \
   -d '{"a": 50, "b": 10, "operation": "subtract"}'
 
 # 测试回显
-curl -X POST http://localhost:8080/api/demo-service/echo \
+curl -X POST http://localhost:8080/api/demo-service-java/echo \
   -H "Content-Type: application/json" \
   -d '{"message": "Hello from Java!"}'
 
 # 获取时间
-curl -X POST http://localhost:8080/api/demo-service/getTime \
+curl -X POST http://localhost:8080/api/demo-service-java/getTime \
   -H "Content-Type: application/json" \
   -d '{"format": "readable"}'
 
 # 获取服务信息
-curl -X POST http://localhost:8080/api/demo-service/getInfo
+curl -X POST http://localhost:8080/api/demo-service-java/getInfo
 ```
 
 ## 代码结构
@@ -81,7 +86,7 @@ curl -X POST http://localhost:8080/api/demo-service/getInfo
 <dependency>
     <groupId>com.google.code.gson</groupId>
     <artifactId>gson</artifactId>
-    <version>2.8.9</version>
+    <version>2.10.1</version>
 </dependency>
 ```
 
@@ -112,6 +117,8 @@ service.registerService("my-service-name", metadata);
 
 ## 注意事项
 
+- 服务名称：`demo-service-java`
 - 使用小端序（Little Endian）进行二进制编码
 - 心跳间隔为 30 秒
 - 默认使用 CachedThreadPool 处理请求
+- 确保 Neo Gateway 在端口 9999 运行

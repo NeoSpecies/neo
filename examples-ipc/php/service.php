@@ -244,7 +244,7 @@ class NeoIPCClient {
 function main() {
     // 从环境变量读取配置
     $host = getenv('NEO_IPC_HOST') ?: 'localhost';
-    $port = getenv('NEO_IPC_PORT') ?: 29999;  // 使用正确的默认端口
+    $port = getenv('NEO_IPC_PORT') ?: 9999;  // 使用正确的默认端口
     
     // 创建客户端
     $client = new NeoIPCClient($host, intval($port));
@@ -321,7 +321,7 @@ function main() {
     
     $client->addHandler('getInfo', function() use ($client) {
         return [
-            'service' => 'demo-service',
+            'service' => 'demo-service-php',
             'language' => 'PHP',
             'version' => '1.0.0',
             'handlers' => ['hello', 'calculate', 'echo', 'getTime', 'getInfo'],
@@ -336,7 +336,7 @@ function main() {
     try {
         // 连接并注册服务
         $client->connect();
-        $client->registerService('demo-service', [
+        $client->registerService('demo-service-php', [
             'language' => 'php',
             'version' => '1.0.0',
             'description' => 'PHP demo service for Neo Framework'

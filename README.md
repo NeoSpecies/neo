@@ -120,65 +120,145 @@ neo/
 ## 调用流程
 
 ```
-HTTP客户端 → HTTPGateway → AsyncService → AsyncTransport → AsyncIPCServer → Python服务
-     ↑                                                                              ↓
-     ← ← ← ← ← ← ← ← ← ← ← 异步响应 ← ← ← ← ← ← ← ← ← ← ← ← ← ← ← ← ← ← ← ← ←
+HTTP客户端 → HTTPGateway → AsyncService → AsyncTransport → AsyncIPCServer → 语言服务
+     ↑                                                                           ↓
+     ← ← ← ← ← ← ← ← ← ← ← 异步响应 ← ← ← ← ← ← ← ← ← ← ← ← ← ← ← ← ← ← ← ←
 ```
 
 ### 详细流程说明
 
-1. **HTTP 请求接收**：HTTPGateway 在 28080 端口接收 HTTP 请求
+1. **HTTP 请求接收**：HTTPGateway 在 8080 端口接收 HTTP 请求
 2. **路由解析**：解析 URL 路径提取服务名和方法名
 3. **请求转发**：通过 AsyncService 处理请求
 4. **服务发现**：通过 Registry 查找目标服务
 5. **IPC 通信**：AsyncIPCServer 转发请求到注册的服务
-6. **服务处理**：目标服务（如 Python 服务）处理请求
+6. **服务处理**：目标语言服务（Python/Go/Node.js/Java/PHP）处理请求
 7. **响应返回**：响应按原路返回给客户端
 
 ## 快速开始
 
 ### 环境要求
 
-- Go 1.19 或更高版本
-- Python 3.8 或更高版本（如果使用 Python 服务）
+- Go 1.16 或更高版本
+- Python 3.7+ （测试 Python 服务）
+- Node.js 14+ （测试 Node.js 服务）
+- Java 8+ （测试 Java 服务）
+- PHP 7.4+ （测试 PHP 服务，需要启用 sockets 扩展）
 
 ### 启动服务
 
-1. **启动主应用程序**（推荐）：
-   
-   使用自动端口管理脚本：
-   ```bash
-   # Windows - 自动处理端口占用
-   start.bat
-   
-   # 或直接运行
-   go run cmd/neo/main.go
-   ```
-   
-   您应该看到输出：
-   ```
-   HTTP网关: http://localhost:28080
-   IPC服务器: localhost:29999
-   健康检查: http://localhost:28080/health
-   ```
+#### 1. 启动 Neo Framework
+```bash
+# 使用默认配置启动
+go run cmd/neo/main.go
 
-   更多启动选项请查看 `scripts/` 目录或 `docs/PORT_MANAGEMENT.md`
+# 或使用特定环境配置
+go run cmd/neo/main.go -config configs/development.yml
+```
 
-2. **启动 Python 服务**（在另一个终端）：
-   ```bash
-   python python_service/example_service.py
-   ```
+您应该看到输出：
+```
+=== Neo Framework ===
+HTTP网关: http://localhost:8080
+IPC服务器: localhost:9999
+健康检查: http://localhost:8080/health
+```
 
-3. **测试服务**：
-   ```bash
-   # 健康检查
-   curl http://localhost:28080/health
-   
-   # 调用服务
-   curl -X POST http://localhost:28080/api/python.math/add \
-     -H "Content-Type: application/json" \
-     -d '{"a": 5, "b": 3}'
-   ```
+#### 2. 启动语言服务示例
+
+在另一个终端窗口，选择要测试的语言服务：
+
+**Python 服务：**
+```bash
+cd examples-ipc/python
+python service.py
+# 服务将注册为 demo-service-python
+```
+
+**Go 服务：**
+```bash
+cd examples-ipc/go
+go run service.go
+# 服务将注册为 demo-service-go
+```
+
+**Node.js 服务：**
+```bash
+cd examples-ipc/nodejs
+node service.js
+# 服务将注册为 demo-service-nodejs
+```
+
+**Java 服务：**
+```bash
+cd examples-ipc/java
+# 需要先下载 Gson 库：https://repo1.maven.org/maven2/com/google/code/gson/gson/2.10.1/gson-2.10.1.jar
+javac -cp gson-2.10.1.jar Service.java
+java -cp .;gson-2.10.1.jar Service  # Windows
+# java -cp .:gson-2.10.1.jar Service  # Linux/Mac
+# 服务将注册为 demo-service-java
+```
+
+**PHP 服务：**
+```bash
+cd examples-ipc/php
+# 首先检查环境
+php check_env.php
+# 如果提示sockets扩展未启用，需要在php.ini中启用：extension=sockets
+php service.php
+# 服务将注册为 demo-service-php
+```
+
+#### 3. 通过 HTTP 网关测试
+
+服务启动后，可以通过HTTP网关调用任意语言的服务：
+
+```bash
+# 健康检查
+curl http://localhost:8080/health
+
+# 调用 Python 服务
+curl -X POST http://localhost:8080/api/demo-service-python/hello \
+  -H "Content-Type: application/json" \
+  -d '{"name": "Neo Framework"}'
+
+# 调用 Go 服务
+curl -X POST http://localhost:8080/api/demo-service-go/hello \
+  -H "Content-Type: application/json" \
+  -d '{"name": "Neo Framework"}'
+
+# 调用 Node.js 服务
+curl -X POST http://localhost:8080/api/demo-service-nodejs/hello \
+  -H "Content-Type: application/json" \
+  -d '{"name": "Neo Framework"}'
+
+# 调用 Java 服务
+curl -X POST http://localhost:8080/api/demo-service-java/hello \
+  -H "Content-Type: application/json" \
+  -d '{"name": "Neo Framework"}'
+
+# 调用 PHP 服务
+curl -X POST http://localhost:8080/api/demo-service-php/hello \
+  -H "Content-Type: application/json" \
+  -d '{"name": "Neo Framework"}'
+```
+
+#### 统一的 API 格式
+
+所有服务都遵循相同的API格式：
+- URL路径：`http://localhost:8080/api/{service-name}/{method}`
+- 请求方法：POST
+- Content-Type：application/json
+- 响应格式：JSON
+
+每个服务都实现了以下方法：
+- `hello` - 问候方法
+- `calculate` - 数学计算
+- `echo` - 回显消息
+- `getTime` - 获取当前时间
+- `getInfo` - 获取服务信息
+
+更多详细测试步骤请参考 [测试手册](docs/TEST_MANUAL.md)。
 
 ## 开发指南
 
@@ -231,10 +311,10 @@ registry:
   type: inmemory
   
 gateway:
-  address: ":28080"
+  address: ":8080"    # HTTP网关端口
   
 ipc:
-  address: ":29999"
+  address: ":9999"     # IPC服务器端口
 ```
 
 ## 构建和打包
@@ -285,14 +365,14 @@ RUN apk --no-cache add ca-certificates
 WORKDIR /root/
 COPY --from=builder /app/neo .
 COPY --from=builder /app/configs ./configs
-EXPOSE 28080 29999
+EXPOSE 8080 9999
 CMD ["./neo"]
 ```
 
 构建和运行：
 ```bash
 docker build -t neo-framework .
-docker run -p 28080:28080 -p 29999:29999 neo-framework
+docker run -p 8080:8080 -p 9999:9999 neo-framework
 ```
 
 ### 发布打包
@@ -398,16 +478,19 @@ gateway → core, registry
 ipc → registry
 ```
 
-## 已知问题
+## 支持的语言服务
 
-1. **服务发现机制问题**：
-   - 现象：Python 服务注册成功，但在请求转发时无法被找到
-   - 错误：`Service call failed: service test.math not found`
-   - 原因：服务注册和查找机制之间存在断连
-   - 状态：需要进一步调试服务发现的实现
+Neo Framework 通过 IPC 协议支持多种编程语言：
 
-2. **Windows 平台兼容性**：
-   - 某些 shell 命令在 Windows 上可能需要调整
+| 语言 | 服务名称 | 示例位置 | 特点 |
+|------|----------|----------|------|
+| Python | demo-service-python | examples-ipc/python | 异步支持，简洁实现 |
+| Go | demo-service-go | examples-ipc/go | 原生性能，类型安全 |
+| Node.js | demo-service-nodejs | examples-ipc/nodejs | 事件驱动，无依赖 |
+| Java | demo-service-java | examples-ipc/java | 企业级，需要Gson |
+| PHP | demo-service-php | examples-ipc/php | Web友好，需要sockets扩展 |
+
+每种语言都实现了相同的服务接口，可以无缝切换使用。
 
 ## 贡献指南
 
@@ -440,8 +523,10 @@ ipc → registry
 - `docs/NeoTestingPlan.md` - 完整的测试策略和质量保证计划
 - `docs/neo-architecture-and-code.md` - 架构分析、代码示例和重构指导
 - `docs/PORT_MANAGEMENT.md` - 端口管理和自动化脚本使用指南
-- `test_manual.md` - 手动测试步骤和验证流程
-- `test/python_service_test_guide.md` - Python服务详细测试指南
+- `docs/TEST_MANUAL.md` - 完整的测试手册，包含所有语言服务的测试步骤
+- `docs/Neo_Framework_Complete_Test_Report.md` - 全语言服务测试报告
+- `examples-ipc/README.md` - 多语言IPC服务示例说明
+- `configs/README.md` - 配置文件详细使用指南
 
 ## 许可证
 

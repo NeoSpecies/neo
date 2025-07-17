@@ -17,7 +17,7 @@ public class Service {
     private final Socket socket;
     private final DataInputStream input;
     private final DataOutputStream output;
-    private final String serviceName = "demo-service";
+    private final String serviceName = "demo-service-java";
     private final Map<String, Handler> handlers = new HashMap<>();
     private final Gson gson = new Gson();
     private final ExecutorService executor = Executors.newCachedThreadPool();
@@ -233,7 +233,7 @@ public class Service {
         if (host == null) host = "localhost";
         
         String portStr = System.getenv("NEO_IPC_PORT");
-        int port = portStr != null ? Integer.parseInt(portStr) : 29999;  // 使用正确的默认端口
+        int port = portStr != null ? Integer.parseInt(portStr) : 9999;  // 使用正确的默认端口
         
         // 创建服务
         Service service = new Service(host, port);
@@ -313,7 +313,7 @@ public class Service {
         
         service.addHandler("getInfo", params -> {
             Map<String, Object> response = new HashMap<>();
-            response.put("service", "demo-service");
+            response.put("service", "demo-service-java");
             response.put("language", "Java");
             response.put("version", "1.0.0");
             response.put("handlers", new ArrayList<>(service.handlers.keySet()));

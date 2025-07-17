@@ -264,7 +264,7 @@ async def main():
     """主函数"""
     # 从环境变量读取配置
     host = os.getenv('NEO_IPC_HOST', 'localhost')
-    port = int(os.getenv('NEO_IPC_PORT', '29999'))  # 使用正确的默认端口
+    port = int(os.getenv('NEO_IPC_PORT', '9999'))  # 使用正确的默认端口
     
     # 创建客户端
     client = NeoIPCClient(host, port)
@@ -329,7 +329,7 @@ async def main():
     @client.handler("getInfo")
     async def get_info(params):
         return {
-            "service": "demo-service",
+            "service": "demo-service-python",
             "language": "Python",
             "version": "1.0.0",
             "handlers": list(client.handlers.keys()),
@@ -343,7 +343,7 @@ async def main():
     try:
         # 连接并注册服务
         await client.connect()
-        await client.register_service("demo-service", {
+        await client.register_service("demo-service-python", {
             "language": "python",
             "version": "1.0.0",
             "description": "Python demo service for Neo Framework"

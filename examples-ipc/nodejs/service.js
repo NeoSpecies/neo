@@ -269,7 +269,7 @@ class NeoIPCClient {
 async function main() {
     // 从环境变量读取配置
     const host = process.env.NEO_IPC_HOST || 'localhost';
-    const port = parseInt(process.env.NEO_IPC_PORT || '29999');  // 使用正确的默认端口
+    const port = parseInt(process.env.NEO_IPC_PORT || '9999');  // 使用正确的默认端口
 
     // 创建客户端
     const client = new NeoIPCClient(host, port);
@@ -349,7 +349,7 @@ async function main() {
 
     client.addHandler('getInfo', async () => {
         return {
-            service: 'demo-service',
+            service: 'demo-service-nodejs',
             language: 'Node.js',
             version: '1.0.0',
             handlers: Array.from(client.handlers.keys()),
@@ -364,7 +364,7 @@ async function main() {
     try {
         // 连接并注册服务
         await client.connect();
-        await client.registerService('demo-service', {
+        await client.registerService('demo-service-nodejs', {
             language: 'nodejs',
             version: '1.0.0',
             description: 'Node.js demo service for Neo Framework'

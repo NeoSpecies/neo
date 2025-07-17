@@ -2,7 +2,7 @@
 server:
   name: "neo-gateway"
   version: "0.1.0"
-  startup_delay: 100          # 启动延迟（毫秒）
+  startup_delay: 100ms        # 启动延迟（毫秒）
   shutdown_timeout: 10        # 关闭超时（秒）
 
 # 传输层配置

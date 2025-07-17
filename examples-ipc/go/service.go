@@ -292,7 +292,7 @@ func main() {
 	}
 	port := os.Getenv("NEO_IPC_PORT")
 	if port == "" {
-		port = "29999"  // 使用正确的默认端口
+		port = "9999"  // 使用正确的默认端口
 	}
 
 	// 创建客户端
@@ -382,7 +382,7 @@ func main() {
 		}
 
 		return map[string]interface{}{
-			"service":  "demo-service",
+			"service":  "demo-service-go",
 			"language": "Go",
 			"version":  "1.0.0",
 			"handlers": handlers,
@@ -395,7 +395,7 @@ func main() {
 	})
 
 	// 注册服务
-	err = client.RegisterService("demo-service", map[string]string{
+	err = client.RegisterService("demo-service-go", map[string]string{
 		"language":    "go",
 		"version":     "1.0.0",
 		"description": "Go demo service for Neo Framework",
