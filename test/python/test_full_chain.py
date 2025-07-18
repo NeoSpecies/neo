@@ -14,8 +14,10 @@ async def run_python_service():
     """运行Python服务"""
     print("🔧 启动Python数学服务...")
     
-    # 切换到python_service目录
-    service_dir = Path(__file__).parent / "python_service"
+    # 切换到examples-ipc/python目录
+    neo_root = Path(__file__).parent.parent.parent  # test/python -> neo root
+    service_dir = neo_root / "examples-ipc" / "python"
+    sys.path.insert(0, str(service_dir))
     os.chdir(service_dir)
     
     # 导入并运行服务

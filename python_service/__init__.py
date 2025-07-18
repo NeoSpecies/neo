@@ -1,1 +1,0 @@
-# Python Service Package for Neo Framework

@@ -775,50 +775,76 @@
 
 ---
 
-## 15. `python_service` (新增)
+## 15. `examples-ipc` (新增)
 
 ### 包说明
 
-- **职责**: Python服务集成，提供IPC客户端库。
-- **设计目标**: 支持Python服务接入Neo框架。
-- **依赖**: Python asyncio, socket。
-- **被依赖**: Python服务实现。
+- **职责**: 多语言服务集成示例，展示各种编程语言如何接入Neo框架。
+- **设计目标**: 为每种语言提供完整的IPC客户端实现和示例服务。
+- **支持语言**: Python、Go、Node.js、Java、PHP。
+- **依赖**: 各语言的标准库（socket、asyncio等）。
 
 ### 目录结构
 
-- `neo_client.py`: IPC客户端库。
-- `example_service.py`: 示例服务实现。
-- `__init__.py`: Python包标识。
-- `README.md`: 使用说明。
+```
+examples-ipc/
+├── python/
+│   ├── neo_client.py    # Python IPC客户端库
+│   └── service.py       # Python示例服务
+├── go/
+│   └── service.go       # Go示例服务
+├── nodejs/
+│   └── service.js       # Node.js示例服务
+├── java/
+│   └── Service.java     # Java示例服务
+├── php/
+│   └── service.php      # PHP示例服务
+└── README.md           # 多语言集成说明
+```
 
-### 文件设计要求
+### 各语言实现要求
 
-1. **`neo_client.py`**
-   - 实现 `NeoIPCClient` 类。
-   - 支持服务注册、异步消息监听。
-   - 实现二进制协议编解码。
-   - 提供处理器注册机制。
+1. **Python (`python/`)**
+   - 实现 `NeoIPCClient` 类
+   - 支持异步消息处理（asyncio）
+   - 实现二进制协议编解码
+   - 提供方法处理器注册机制
 
-2. **`example_service.py`**
-   - 实现 `PythonMathService` 示例。
-   - 展示服务注册和请求处理。
-   - 提供加法、乘法、表达式计算功能。
+2. **Go (`go/`)**
+   - 原生性能实现
+   - 类型安全的消息处理
+   - 支持并发请求
 
-### 类和方法说明
+3. **Node.js (`nodejs/`)**
+   - 事件驱动模型
+   - 无额外依赖
+   - Promise/async支持
 
-#### NeoIPCClient
+4. **Java (`java/`)**
+   - 面向对象设计
+   - 使用Gson进行JSON处理
+   - 线程安全实现
 
-- `__init__(self, host="localhost", port=29999)`
-- `async connect(self)`: 建立连接
-- `async register_service(self, service_name, metadata=None)`: 注册服务
-- `register_handler(self, method, handler)`: 注册方法处理器
-- `async listen(self)`: 开始监听消息
+5. **PHP (`php/`)**
+   - 需要sockets扩展
+   - 同步消息处理
+   - 支持Web集成
+
+### 统一服务接口
+
+所有语言都实现以下方法：
+- `hello(name)`: 问候服务
+- `calculate(expression)`: 数学计算
+- `echo(message)`: 消息回显
+- `getTime()`: 获取当前时间
+- `getInfo()`: 获取服务信息
 
 ### 测试要求
 
-- **协议兼容**: 验证与Go IPC服务器的通信。
-- **异步处理**: 测试并发请求处理。
-- **错误处理**: 验证异常情况的处理。
+- **协议兼容**: 验证与Go IPC服务器的通信
+- **功能完整**: 确保所有方法正确实现
+- **性能测试**: 验证各语言的性能表现
+- **错误处理**: 测试异常情况的处理
 
 ---
 

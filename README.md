@@ -68,9 +68,12 @@ neo/
 │       └── string.go         # 字符串处理
 ├── pkg/                       # 公共 API（可对外暴露）
 │   └── api.go                # 客户端 API
-├── python_service/            # Python 服务集成
-│   ├── neo_client.py         # Python IPC 客户端库
-│   └── example_service.py    # 示例 Python 服务
+├── examples-ipc/              # 多语言服务示例
+│   ├── python/               # Python 服务示例
+│   ├── go/                   # Go 服务示例
+│   ├── nodejs/               # Node.js 服务示例
+│   ├── java/                 # Java 服务示例
+│   └── php/                  # PHP 服务示例
 ├── test/                      # 测试文件
 │   ├── python/               # Python 测试脚本
 │   ├── integration/          # Go 集成测试
@@ -384,7 +387,7 @@ mkdir -p release/neo-v1.0.0
 # 复制必要文件
 cp bin/neo release/neo-v1.0.0/
 cp -r configs release/neo-v1.0.0/
-cp -r python_service release/neo-v1.0.0/
+cp -r examples-ipc release/neo-v1.0.0/
 cp README.md release/neo-v1.0.0/
 
 # 创建压缩包

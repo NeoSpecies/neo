@@ -48,7 +48,7 @@ go test ./...
 ### Python测试
 - `test_ipc_client.py` - 测试基本的IPC连接和消息发送
 - `test_stress.py` - 对HTTP网关进行压力测试
-- `test_complete_flow.py` - 测试完整的HTTP->Python服务调用流程
+- `test_complete_flow.py` - 测试完整的HTTP->语言服务调用流程
 
 ### Go集成测试
 - `test_core_service.go` - 测试核心服务功能
@@ -58,5 +58,5 @@ go test ./...
 ## 注意事项
 
 1. 运行测试前确保Neo Framework已启动
-2. Python测试需要先启动python_service
+2. 语言服务测试需要先启动对应的服务（如`examples-ipc/python/service.py`）
 3. 日志文件会生成在`logs/`目录中

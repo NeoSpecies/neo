@@ -45,7 +45,7 @@ async def make_request(session, url, data, request_id):
 
 async def stress_test():
     """执行压力测试"""
-    base_url = "http://localhost:28080"
+    base_url = "http://localhost:8080"
     
     # 测试参数
     num_requests = 50  # 总请求数
@@ -60,9 +60,9 @@ async def stress_test():
     # 准备测试数据
     test_cases = [
         {
-            "url": f"{base_url}/api/python.math/add",
-            "data": {"a": i, "b": i+1},
-            "name": "add"
+            "url": f"{base_url}/api/demo-service-python/calculate",
+            "data": {"a": i, "b": i+1, "operation": "add"},
+            "name": "calculate"
         }
         for i in range(num_requests)
     ]

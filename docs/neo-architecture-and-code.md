@@ -137,9 +137,12 @@
   │   ├── config/       # 配置管理
   │   └── utils/        # 工具函数
   ├── pkg/              # 公共 API
-  └── python_service/   # Python服务集成
-      ├── neo_client.py # IPC客户端
-      └── example_service.py # 示例服务
+  └── examples-ipc/     # 多语言服务集成示例
+      ├── python/       # Python服务
+      ├── go/           # Go服务
+      ├── nodejs/       # Node.js服务
+      ├── java/         # Java服务
+      └── php/          # PHP服务
   ```
 
 - **包间通信机制**  

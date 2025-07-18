@@ -58,14 +58,14 @@ type HTTPGateway struct {
 [元数据长度:4字节][元数据JSON:N字节][数据长度:4字节][数据:N字节]
 ```
 
-#### 1.3 Python服务集成 (`python_service`)
-**背景**：支持用Python编写的服务接入Neo框架。
+#### 1.3 多语言服务集成 (`examples-ipc`)
+**背景**：支持多种编程语言编写的服务接入Neo框架。
 
 **设计决策**：
-- 提供Python客户端库（neo_client.py）
-- 支持异步消息处理（基于asyncio）
-- 自动服务注册
-- 方法处理器注册机制
+- 为每种语言提供IPC客户端实现
+- 支持Python、Go、Node.js、Java、PHP等语言
+- 统一的二进制协议通信
+- 自动服务注册和方法处理器机制
 
 ### 2. 核心改进
 
@@ -98,7 +98,7 @@ Client → Transport → Protocol → Service
 
 #### 3.2 新调用流程
 ```
-HTTP Client → Gateway → Core.Service → Transport → IPC Server → Python Service
+HTTP Client → Gateway → Core.Service → Transport → IPC Server → 语言服务
                 ↑                                                        ↓
                 ← ← ← ← ← ← ← 异步响应 ← ← ← ← ← ← ← ← ← ← ← ← ← ← ← ←
 ```
@@ -146,7 +146,7 @@ HTTP Client → Gateway → Core.Service → Transport → IPC Server → Python
 
 #### 6.2 集成测试
 - 完整调用链测试
-- Python服务集成测试
+- 多语言服务集成测试
 
 #### 6.3 性能测试
 - 并发请求测试
