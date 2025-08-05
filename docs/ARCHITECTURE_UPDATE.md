@@ -212,8 +212,8 @@ type Application struct {
 
 #### 10.2 端口标准化
 **改进内容**：
-- **cmd/neo**: HTTP 28080, IPC 29999（主应用，推荐）
-- **cmd/gateway**: HTTP 18080, IPC 19999（独立网关）
+- **cmd/neo**: HTTP 8080, IPC 9999（主应用，推荐）
+- **cmd/gateway**: HTTP 8080, IPC 9999（生产网关）
 - **cmd/test_gateway**: HTTP 8080, IPC 9999（测试网关）
 - **cmd/simple_gateway**: HTTP 8080（简化测试）
 

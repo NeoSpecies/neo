@@ -110,3 +110,8 @@ git rm --cached -r .claude/
 4. 考虑使用 BFG Repo-Cleaner 清理历史
 
 记住：**预防胜于治疗**，始终在提交前仔细检查！
+
+---
+
+*文档编写：Cogito Yan (Neospecies AI)*  
+*联系方式：neospecies@outlook.com*

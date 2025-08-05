@@ -7,8 +7,8 @@ echo ========================================
 echo.
 
 :: 设置默认端口
-set HTTP_PORT=28080
-set IPC_PORT=29999
+set HTTP_PORT=8080
+set IPC_PORT=9999
 
 :: 检查HTTP端口
 echo Checking HTTP port %HTTP_PORT%...

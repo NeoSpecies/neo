@@ -397,13 +397,13 @@
          pool := conn.NewConnectionPool()
          ctx := context.Background()
 
-         c, err := pool.GetConnection(ctx, "localhost:28080")
+         c, err := pool.GetConnection(ctx, "localhost:8080")
          assert.NoError(t, err)
          assert.NotNil(t, c)
 
          pool.ReleaseConnection(c)
          // 验证连接可重用
-         c2, err := pool.GetConnection(ctx, "localhost:28080")
+         c2, err := pool.GetConnection(ctx, "localhost:8080")
          assert.NoError(t, err)
          assert.NotNil(t, c2)
      }
@@ -422,7 +422,7 @@
      func TestConnIntegration(t *testing.T) {
          pool := conn.NewConnectionPool()
          ctx := context.Background()
-         c, err := pool.GetConnection(ctx, "localhost:28080")
+         c, err := pool.GetConnection(ctx, "localhost:8080")
          assert.NoError(t, err)
 
          // 模拟发送数据
@@ -444,7 +444,7 @@
          pool := conn.NewConnectionPool()
          ctx := context.Background()
          for i := 0; i < b.N; i++ {
-             c, _ := pool.GetConnection(ctx, "localhost:28080")
+             c, _ := pool.GetConnection(ctx, "localhost:8080")
              pool.ReleaseConnection(c)
          }
      }
@@ -678,7 +678,7 @@
          reg := registry.NewServiceRegistry(cfg)
          ctx := context.Background()
 
-         instance := registry.ServiceInstance{Name: "测试服务", Address: "localhost:28080"}
+         instance := registry.ServiceInstance{Name: "测试服务", Address: "localhost:8080"}
          err := reg.RegisterService(ctx, instance)
          assert.NoError(t, err)
 
@@ -692,7 +692,7 @@
          reg := registry.NewServiceRegistry(cfg)
          ctx := context.Background()
 
-         instance := registry.ServiceInstance{Name: "", Address: "localhost:28080")
+         instance := registry.ServiceInstance{Name: "", Address: "localhost:8080")
          err := reg.RegisterService(ctx, instance)
          assert.Error(t, err)
      }
@@ -706,7 +706,7 @@
          reg := registry.NewServiceRegistry(cfg)
          ctx := context.Background()
 
-         instance := registry.ServiceInstance{Name: "测试服务", Address: "localhost:28080"}
+         instance := registry.ServiceInstance{Name: "测试服务", Address: "localhost:8080"}
          err := reg.RegisterService(ctx, instance)
          assert.NoError(t, err)
 
@@ -725,7 +725,7 @@
          cfg := config.Config{}
          reg := registry.NewServiceRegistry(cfg)
          ctx := context.Background()
-         instance := registry.ServiceInstance{Name: "测试服务", Address: "localhost:28080"}
+         instance := registry.ServiceInstance{Name: "测试服务", Address: "localhost:8080"}
          reg.RegisterService(ctx, instance)
 
          for i := 0; i < b.N; i++ {
@@ -786,7 +786,7 @@
          ctx := context.Background()
          req := types.Request{Method: "GET", Body: []byte("测试")}
 
-         rMock.On("DiscoverService", ctx, mock.Anything).Return([]registry.ServiceInstance{{Name: "测试服务", Address: "localhost:28080"}}, nil)
+         rMock.On("DiscoverService", ctx, mock.Anything).Return([]registry.ServiceInstance{{Name: "测试服务", Address: "localhost:8080"}}, nil)
          tMock.On("Send", ctx, mock.Anything).Return(nil)
 
          resp, err := svc.HandleRequest(ctx, req)
@@ -826,7 +826,7 @@
          ctx := context.Background()
          req := types.Request{Method: "GET", Body: []byte("测试")}
 
-         rMock.On("DiscoverService", ctx, mock.Anything).Return([]registry.ServiceInstance{{Name: "测试服务", Address: "localhost:28080"}}, nil)
+         rMock.On("DiscoverService", ctx, mock.Anything).Return([]registry.ServiceInstance{{Name: "测试服务", Address: "localhost:8080"}}, nil)
          tMock.On("Send", ctx, mock.Anything).Return(nil)
 
          for i := 0; i < b.N; i++ {

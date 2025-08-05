@@ -7,8 +7,8 @@ echo ========================================
 echo.
 
 :: 设置默认端口
-set HTTP_PORT=28080
-set IPC_PORT=29999
+set HTTP_PORT=8080
+set IPC_PORT=9999
 
 :: 自动清理端口函数
 :CLEANUP_PORTS
@@ -117,8 +117,8 @@ goto :START_NEO
 :MANUAL_MODE
 echo.
 echo Manual port selection:
-set /p HTTP_PORT="Enter HTTP port (default 28080): "
-set /p IPC_PORT="Enter IPC port (default 29999): "
+set /p HTTP_PORT="Enter HTTP port (default 8080): "
+set /p IPC_PORT="Enter IPC port (default 9999): "
 goto :CLEANUP_PORTS
 
 :START_NEO

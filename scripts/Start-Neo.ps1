@@ -1,7 +1,7 @@
 # Neo Framework PowerShell Startup Script
 param(
-    [int]$HttpPort = 28080,
-    [int]$IpcPort = 29999,
+    [int]$HttpPort = 8080,
+    [int]$IpcPort = 9999,
     [switch]$AutoCleanup,
     [switch]$Force
 )

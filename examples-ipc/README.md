@@ -148,3 +148,8 @@ curl -X POST http://localhost:8080/api/demo-service/echo \
 ## 🤝 贡献
 
 欢迎提交更多语言的示例实现！
+
+---
+
+*作者：Cogito Yan (Neospecies AI)*  
+*联系方式：neospecies@outlook.com*

@@ -17,8 +17,8 @@ if %errorlevel% neq 0 (
 )
 
 :: 默认端口
-set HTTP_PORT=28080
-set IPC_PORT=29999
+set HTTP_PORT=8080
+set IPC_PORT=9999
 
 echo Checking and cleaning default Neo Framework ports...
 echo.
@@ -81,7 +81,7 @@ echo.
 
 :: 检查其他常用端口
 echo Checking other commonly used ports...
-set COMMON_PORTS=8080 9999 30080 30999 18080 19999
+set COMMON_PORTS=18080 19999 28080 29999
 
 for %%p in (%COMMON_PORTS%) do (
     set FOUND=

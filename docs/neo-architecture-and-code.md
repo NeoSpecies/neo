@@ -345,3 +345,8 @@ type Response struct {
 - **优先级**：基于现有文档进行更改。  
 - **重点领域**：解耦协议和注册层以提高灵活性。  
 - **升级策略**：保持向后兼容性，采用渐进式重构。
+
+---
+
+*文档编写：Cogito Yan (Neospecies AI)*  
+*联系方式：neospecies@outlook.com*

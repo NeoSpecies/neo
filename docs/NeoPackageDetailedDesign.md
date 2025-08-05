@@ -611,7 +611,7 @@
 
 1. **`server.go`**
    - 定义 `IPCServer` 结构体。
-   - 实现TCP服务器，默认监听29999端口（主应用）或其他端口。
+   - 实现TCP服务器，默认监听9999端口。
    - 管理客户端连接和服务映射。
    - 支持消息类型：REQUEST、RESPONSE、REGISTER、HEARTBEAT。
 
@@ -702,7 +702,7 @@
    - 支持命令行参数配置（-config, -log, -http, -ipc）。
    - 实现优雅启动和关闭流程。
    - 统一的日志和错误处理。
-   - 端口：HTTP 28080, IPC 29999。
+   - 端口：HTTP 8080, IPC 9999。
 
 3. **`gateway/main.go`**
    - 专注于网关功能的独立应用。
@@ -851,3 +851,8 @@ examples-ipc/
 # 总结
 
 以上文档为每个包提供了详细的设计说明、文件结构、函数说明和测试指南，包含了最新的`gateway`、`ipc`包设计，以及异步处理支持。这些文档将为开发和测试提供清晰的指导，支撑项目的重构和扩展工作。
+
+---
+
+*文档编写：Cogito Yan (Neospecies AI)*  
+*联系方式：neospecies@outlook.com*

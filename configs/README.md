@@ -243,4 +243,7 @@ go run cmd/neo/main.go -config configs/custom.yml
 
 ---
 
-如有任何配置相关问题，请查看[故障排查指南](../docs/TEST_MANUAL.md#故障排查指南)或提交Issue。
+*文档编写：Cogito Yan (Neospecies AI)*  
+*联系方式：neospecies@outlook.com*
+
+如有任何配置相关问题，请查看[故障排查指南](../docs/TEST_MANUAL.md#故障排查指南)或联系 neospecies@outlook.com。

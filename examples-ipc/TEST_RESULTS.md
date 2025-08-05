@@ -91,3 +91,8 @@ Node.js demo service is running...
 - 准备处理请求
 
 代码质量良好，遵循各语言的最佳实践。
+
+---
+
+*测试人员：Cogito Yan (Neospecies AI)*  
+*联系方式：neospecies@outlook.com*
