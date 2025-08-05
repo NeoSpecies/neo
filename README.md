@@ -26,10 +26,7 @@ Neo 是一个基于 Go 语言的高性能微服务通信框架，旨在为分布
 neo/
 ├── cmd/                        # 命令行应用
 │   ├── neo/                   # 主要应用程序（推荐使用）
-│   ├── gateway/               # 生产环境 HTTP 网关
-│   ├── simple_gateway/        # 简化测试网关
-│   ├── test_gateway/          # 集成测试网关
-│   └── main.go               # 基础服务应用
+│   └── gateway/               # 生产环境 HTTP 网关
 ├── configs/                   # 配置文件
 │   └── default.yml           # 默认配置
 ├── internal/                  # 内部包（不对外暴露）
@@ -75,6 +72,9 @@ neo/
 │   ├── java/                 # Java 服务示例
 │   └── php/                  # PHP 服务示例
 ├── test/                      # 测试文件
+│   ├── gateways/             # 测试用网关
+│   │   ├── simple_gateway/   # 简化测试网关
+│   │   └── test_gateway/     # 集成测试网关
 │   ├── python/               # Python 测试脚本
 │   ├── integration/          # Go 集成测试
 │   ├── stress/               # 压力测试
