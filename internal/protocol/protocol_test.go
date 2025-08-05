@@ -114,11 +114,8 @@ func TestHTTPCodec(t *testing.T) {
 		decoded, err := codec.Decode(encoded)
 		require.NoError(t, err)
 
-		// 非JSON内容会被编码为JSON字符串
-		var decodedText string
-		err = json.Unmarshal(decoded.Body, &decodedText)
-		require.NoError(t, err)
-		assert.Equal(t, "plain text content", decodedText)
+		// 非JSON内容会被保留为原始文本
+		assert.Equal(t, "plain text content", string(decoded.Body))
 	})
 
 	t.Run("消息类型转换", func(t *testing.T) {

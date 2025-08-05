@@ -132,6 +132,18 @@ func (m *mockRegistry) ListServices(ctx context.Context) ([]string, error) {
 	return []string{"test-service"}, nil
 }
 
+// mockAsyncIPCClient 用于测试的模拟 AsyncIPC 客户端
+type mockAsyncIPCClient struct {
+	forwardFunc func(ctx context.Context, serviceName string, method string, data []byte) ([]byte, error)
+}
+
+func (m *mockAsyncIPCClient) ForwardRequest(ctx context.Context, serviceName string, method string, data []byte) ([]byte, error) {
+	if m.forwardFunc != nil {
+		return m.forwardFunc(ctx, serviceName, method, data)
+	}
+	return nil, fmt.Errorf("not implemented")
+}
+
 func TestService_Basic(t *testing.T) {
 	t.Run("创建服务", func(t *testing.T) {
 		opts := core.ServiceOptions{
@@ -173,13 +185,30 @@ func TestService_HandleRequest(t *testing.T) {
 			},
 		}
 
-		mockReg := &mockRegistry{}
+		mockReg := &mockRegistry{
+			discoverFunc: func(ctx context.Context, serviceName string) ([]*registry.ServiceInstance, error) {
+				return []*registry.ServiceInstance{
+					{
+						ID:      "instance-1",
+						Name:    serviceName,
+						Address: "localhost:9999",
+					},
+				}, nil
+			},
+		}
+
+		mockAsyncIPC := &mockAsyncIPCClient{
+			forwardFunc: func(ctx context.Context, serviceName string, method string, data []byte) ([]byte, error) {
+				return []byte("success response"), nil
+			},
+		}
 
 		opts := core.ServiceOptions{
 			Name:      "test-service",
 			Transport: mockTrans,
 			Registry:  mockReg,
 			Timeout:   5 * time.Second,
+			AsyncIPC:  mockAsyncIPC,
 		}
 
 		service := core.NewService(opts)

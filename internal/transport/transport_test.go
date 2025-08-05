@@ -2,7 +2,6 @@ package transport_test
 
 import (
 	"context"
-	"neo/internal/config"
 	"neo/internal/transport"
 	"neo/internal/types"
 	"testing"
@@ -14,14 +13,13 @@ import (
 
 func TestTransport_Basic(t *testing.T) {
 	// 创建配置
-	cfg := config.Config{
-		Transport: config.TransportConfig{
-			Timeout:         config.Duration(30 * time.Second),
-			RetryCount:      3,
-			MaxConnections:  10,
-			MinConnections:  2,
-			MaxIdleTime:     config.Duration(300 * time.Second),
-		},
+	cfg := transport.Config{
+		Timeout:              30 * time.Second,
+		RetryCount:           3,
+		MaxConnections:       10,
+		MinConnections:       2,
+		MaxIdleTime:          300 * time.Second,
+		HealthCheckInterval:  30 * time.Second,
 	}
 
 	// 创建传输层
@@ -56,14 +54,13 @@ func TestTransport_Basic(t *testing.T) {
 }
 
 func TestTransport_SendAsync(t *testing.T) {
-	cfg := config.Config{
-		Transport: config.TransportConfig{
-			Timeout:         config.Duration(30 * time.Second),
-			RetryCount:      3,
-			MaxConnections:  10,
-			MinConnections:  2,
-			MaxIdleTime:     config.Duration(300 * time.Second),
-		},
+	cfg := transport.Config{
+		Timeout:              30 * time.Second,
+		RetryCount:           3,
+		MaxConnections:       10,
+		MinConnections:       2,
+		MaxIdleTime:          300 * time.Second,
+		HealthCheckInterval:  30 * time.Second,
 	}
 
 	transport := transport.NewTransport(cfg)
@@ -97,14 +94,13 @@ func TestTransport_SendAsync(t *testing.T) {
 }
 
 func TestTransport_MessageHandling(t *testing.T) {
-	cfg := config.Config{
-		Transport: config.TransportConfig{
-			Timeout:         config.Duration(30 * time.Second),
-			RetryCount:      3,
-			MaxConnections:  10,
-			MinConnections:  2,
-			MaxIdleTime:     config.Duration(300 * time.Second),
-		},
+	cfg := transport.Config{
+		Timeout:              30 * time.Second,
+		RetryCount:           3,
+		MaxConnections:       10,
+		MinConnections:       2,
+		MaxIdleTime:          300 * time.Second,
+		HealthCheckInterval:  30 * time.Second,
 	}
 
 	transport := transport.NewTransport(cfg)
@@ -132,14 +128,13 @@ func TestTransport_MessageHandling(t *testing.T) {
 
 func TestTransport_Configuration(t *testing.T) {
 	t.Run("有效配置", func(t *testing.T) {
-		cfg := config.Config{
-			Transport: config.TransportConfig{
-				Timeout:         config.Duration(30 * time.Second),
-				RetryCount:      3,
-				MaxConnections:  100,
-				MinConnections:  10,
-				MaxIdleTime:     config.Duration(600 * time.Second),
-			},
+		cfg := transport.Config{
+			Timeout:              30 * time.Second,
+			RetryCount:           3,
+			MaxConnections:       100,
+			MinConnections:       10,
+			MaxIdleTime:          600 * time.Second,
+			HealthCheckInterval:  30 * time.Second,
 		}
 
 		transport := transport.NewTransport(cfg)
@@ -150,11 +145,10 @@ func TestTransport_Configuration(t *testing.T) {
 	})
 
 	t.Run("默认配置", func(t *testing.T) {
-		cfg := config.Config{
-			Transport: config.TransportConfig{
-				Timeout:         config.Duration(30 * time.Second),
-				MaxConnections:  10,
-			},
+		cfg := transport.Config{
+			Timeout:              30 * time.Second,
+			MaxConnections:       10,
+			HealthCheckInterval:  30 * time.Second,
 		}
 
 		transport := transport.NewTransport(cfg)
@@ -166,14 +160,13 @@ func TestTransport_Configuration(t *testing.T) {
 }
 
 func TestTransport_Lifecycle(t *testing.T) {
-	cfg := config.Config{
-		Transport: config.TransportConfig{
-			Timeout:         config.Duration(30 * time.Second),
-			RetryCount:      3,
-			MaxConnections:  10,
-			MinConnections:  2,
-			MaxIdleTime:     config.Duration(300 * time.Second),
-		},
+	cfg := transport.Config{
+		Timeout:              30 * time.Second,
+		RetryCount:           3,
+		MaxConnections:       10,
+		MinConnections:       2,
+		MaxIdleTime:          300 * time.Second,
+		HealthCheckInterval:  30 * time.Second,
 	}
 
 	t.Run("正常生命周期", func(t *testing.T) {
@@ -209,14 +202,13 @@ func TestTransport_Lifecycle(t *testing.T) {
 }
 
 func TestTransport_ErrorScenarios(t *testing.T) {
-	cfg := config.Config{
-		Transport: config.TransportConfig{
-			Timeout:         config.Duration(30 * time.Second),
-			RetryCount:      3,
-			MaxConnections:  10,
-			MinConnections:  2,
-			MaxIdleTime:     config.Duration(300 * time.Second),
-		},
+	cfg := transport.Config{
+		Timeout:              30 * time.Second,
+		RetryCount:           3,
+		MaxConnections:       10,
+		MinConnections:       2,
+		MaxIdleTime:          300 * time.Second,
+		HealthCheckInterval:  30 * time.Second,
 	}
 
 	transport := transport.NewTransport(cfg)
@@ -255,14 +247,13 @@ func TestTransport_ErrorScenarios(t *testing.T) {
 }
 
 func TestTransport_StatsTracking(t *testing.T) {
-	cfg := config.Config{
-		Transport: config.TransportConfig{
-			Timeout:         config.Duration(30 * time.Second),
-			RetryCount:      3,
-			MaxConnections:  10,
-			MinConnections:  2,
-			MaxIdleTime:     config.Duration(300 * time.Second),
-		},
+	cfg := transport.Config{
+		Timeout:              30 * time.Second,
+		RetryCount:           3,
+		MaxConnections:       10,
+		MinConnections:       2,
+		MaxIdleTime:          300 * time.Second,
+		HealthCheckInterval:  30 * time.Second,
 	}
 
 	transport := transport.NewTransport(cfg)
@@ -294,14 +285,13 @@ func TestTransport_StatsTracking(t *testing.T) {
 }
 
 func BenchmarkTransport(b *testing.B) {
-	cfg := config.Config{
-		Transport: config.TransportConfig{
-			Timeout:         config.Duration(30 * time.Second),
-			RetryCount:      3,
-			MaxConnections:  100,
-			MinConnections:  10,
-			MaxIdleTime:     config.Duration(300 * time.Second),
-		},
+	cfg := transport.Config{
+		Timeout:              30 * time.Second,
+		RetryCount:           3,
+		MaxConnections:       100,
+		MinConnections:       10,
+		MaxIdleTime:          300 * time.Second,
+		HealthCheckInterval:  30 * time.Second,
 	}
 
 	transport := transport.NewTransport(cfg)

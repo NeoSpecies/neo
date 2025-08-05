@@ -22,11 +22,10 @@ type exponentialBackoff struct {
 // NewRetryPolicy 根据配置创建重试策略
 func NewRetryPolicy(cfg *config.Config) RetryPolicy {
     // 从配置中读取重试参数
-    transportCfg := cfg.GetTransportConfig()
     return &exponentialBackoff{
-        maxAttempts:     transportCfg.MaxRetries,  // 恢复为原始值，不+1
-        initialInterval: time.Duration(transportCfg.InitialBackoff) * time.Millisecond,
-        maxInterval:     time.Duration(transportCfg.MaxBackoff) * time.Millisecond,
+        maxAttempts:     cfg.Transport.RetryCount,
+        initialInterval: time.Duration(cfg.Transport.InitialBackoff),
+        maxInterval:     time.Duration(cfg.Transport.MaxBackoff),
     }
 }
 

@@ -19,14 +19,14 @@ func TestCodec_EncodeDecode(t *testing.T) {
 		protocolType: "http",
 		originalMsg: types.Message{
 			ID:      "test-http-123",
-			Content: []byte("HTTP测试消息内容"),
+			Body: []byte("HTTP测试消息内容"),
 		},
 	}, {
 		name:         "IPC协议测试",
 		protocolType: "ipc",
 		originalMsg: types.Message{
 			ID:      "test-ipc-456",
-			Content: []byte("IPC测试消息内容"),
+			Body: []byte("IPC测试消息内容"),
 		},
 	}}
 
@@ -34,9 +34,9 @@ func TestCodec_EncodeDecode(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			// 创建编解码器
-			codec := NewCodec(tc.protocolType)
-			if codec == nil {
-				t.Fatalf("创建%s编解码器失败", tc.protocolType)
+			codec, err := NewCodec(tc.protocolType)
+			if err != nil {
+				t.Fatalf("创建%s编解码器失败: %v", tc.protocolType, err)
 			}
 
 			// 编码消息
@@ -55,8 +55,8 @@ func TestCodec_EncodeDecode(t *testing.T) {
 			if decodedMsg.ID != tc.originalMsg.ID {
 				t.Errorf("%s ID不匹配: 期望%s, 实际%s", tc.protocolType, tc.originalMsg.ID, decodedMsg.ID)
 			}
-			if string(decodedMsg.Content) != string(tc.originalMsg.Content) {
-				t.Errorf("%s 内容不匹配: 期望%s, 实际%s", tc.protocolType, string(tc.originalMsg.Content), string(decodedMsg.Content))
+			if string(decodedMsg.Body) != string(tc.originalMsg.Body) {
+				t.Errorf("%s 内容不匹配: 期望%s, 实际%s", tc.protocolType, string(tc.originalMsg.Body), string(decodedMsg.Body))
 			}
 		})
 	}
@@ -64,32 +64,29 @@ func TestCodec_EncodeDecode(t *testing.T) {
 
 // TestNewCodec_UnsupportedProtocol 测试不支持的协议类型
 func TestNewCodec_UnsupportedProtocol(t *testing.T) {
-	defer func() {
-		if r := recover(); r == nil {
-			t.Error("预期不支持的协议会触发panic，但没有")
-		}
-	}()
-
 	// 尝试创建不支持的协议编解码器
-	NewCodec("unsupported")
+	_, err := NewCodec("unsupported")
+	if err == nil {
+		t.Error("预期不支持的协议会返回错误，但没有")
+	}
 }
 
 // 测试超大消息编码/解码
 func TestCodec_LargeMessage(t *testing.T) {
-	largeContent := make([]byte, 1024*1024) // 1MB测试数据
-	for i := range largeContent {
-		largeContent[i] = byte(i % 256)
+	largeBody := make([]byte, 1024*1024) // 1MB测试数据
+	for i := range largeBody {
+		largeBody[i] = byte(i % 256)
 	}
 
 	// 移除未使用的name字段或使用匿名结构体
 	testCase := struct {
 		protocolType string
 		originalMsg  types.Message
-	}{"http", types.Message{ID: "large-msg-001", Content: largeContent}}
+	}{"http", types.Message{ID: "large-msg-001", Body: largeBody}}
 
-	codec := NewCodec(testCase.protocolType)
-	if codec == nil {
-		t.Fatalf("创建%s编解码器失败", testCase.protocolType)
+	codec, err := NewCodec(testCase.protocolType)
+	if err != nil {
+		t.Fatalf("创建%s编解码器失败: %v", testCase.protocolType, err)
 	}
 
 	// 编码测试
@@ -105,21 +102,21 @@ func TestCodec_LargeMessage(t *testing.T) {
 	}
 
 	// 验证数据完整性
-	if !bytes.Equal(decodedMsg.Content, testCase.originalMsg.Content) {
+	if !bytes.Equal(decodedMsg.Body, testCase.originalMsg.Body) {
 		t.Error("超大消息内容解码不一致")
 	}
 }
 
 // 测试损坏数据解码错误处理
 func TestCodec_CorruptedData(t *testing.T) {
-	codec := NewCodec("http")
-	if codec == nil {
-		t.Fatal("创建HTTP编解码器失败")
+	codec, err := NewCodec("http")
+	if err != nil {
+		t.Fatal("创建HTTP编解码器失败: ", err)
 	}
 
 	// 测试损坏的JSON数据
 	corruptedData := []byte(`{"id":"test","content":[invalid]}`)
-	_, err := codec.Decode(context.Background(), corruptedData)
+	_, err = codec.Decode(context.Background(), corruptedData)
 	if err == nil {
 		t.Error("预期损坏数据解码失败，但未返回错误")
 	}
@@ -127,10 +124,10 @@ func TestCodec_CorruptedData(t *testing.T) {
 
 // 编解码性能基准测试
 func BenchmarkCodec_Performance(b *testing.B) {
-	msg := types.Message{ID: "bench-msg", Content: []byte("基准测试消息内容重复多次以增加长度基准测试消息内容")}
-	codec := NewCodec("http")
-	if codec == nil {
-		b.Fatal("创建编解码器失败")
+	msg := types.Message{ID: "bench-msg", Body: []byte("基准测试消息内容重复多次以增加长度基准测试消息内容")}
+	codec, err := NewCodec("http")
+	if err != nil {
+		b.Fatal("创建编解码器失败: ", err)
 	}
 
 	b.ResetTimer()

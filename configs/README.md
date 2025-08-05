@@ -17,10 +17,21 @@ go run cmd/neo/main.go -config configs/development.yml
 
 | 文件名 | 用途 | 适用场景 | 端口配置 |
 |--------|------|----------|----------|
-| `default.yml` | 默认配置文件 | 生产环境基准配置 | HTTP:8080, IPC:9999 |
-| `development.yml` | 开发环境配置 | 本地开发调试 | HTTP:8080, IPC:9999 |
-| `production.yml` | 生产环境配置 | 线上部署 | HTTP:8080, IPC:9999 |
+| `default.yml` | 默认配置文件 | 生产环境基准配置 | **HTTP:8080, IPC:9999** ✅ |
+| `development.yml` | 开发环境配置 | 本地开发调试 | **HTTP:8080, IPC:9999** ✅ |
+| `production.yml` | 生产环境配置 | 线上部署 | **HTTP:8080, IPC:9999** ✅ |
 | `test.yml` | 测试环境配置 | 自动化测试 | HTTP:18080, IPC:19999 |
+
+### 🔴 重要：统一端口配置
+为了避免混乱，Neo Framework 统一使用以下默认端口：
+- **HTTP Gateway**: `8080`
+- **IPC Server**: `9999`
+
+所有语言的示例代码都默认连接到这些端口。如需修改，请通过环境变量统一调整：
+```bash
+export NEO_IPC_PORT=9999
+export NEO_HTTP_PORT=8080
+```
 
 ### 为什么需要这些配置文件？
 

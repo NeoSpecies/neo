@@ -56,7 +56,7 @@ func TestDefaultConfig(t *testing.T) {
 	assert.False(t, cfg.Log.WithLocation)
 
 	// 模式
-	assert.Equal(t, "debug", cfg.Mode)
+	assert.Equal(t, "production", cfg.Mode)
 }
 
 // 测试配置验证
@@ -165,7 +165,7 @@ gateway:
 log:
   level: debug
   with_color: false
-mode: release
+mode: production
 `
 		require.NoError(t, os.WriteFile(yamlFile, []byte(yamlContent), 0644))
 
@@ -182,7 +182,7 @@ mode: release
 		assert.Equal(t, ":8088", cfg.Gateway.Address)
 		assert.Equal(t, "debug", cfg.Log.Level)
 		assert.False(t, cfg.Log.WithColor)
-		assert.Equal(t, "release", cfg.Mode)
+		assert.Equal(t, "production", cfg.Mode)
 	})
 
 	t.Run("JSON文件", func(t *testing.T) {
@@ -279,7 +279,7 @@ func TestConfigManager(t *testing.T) {
 		// 获取默认配置
 		cfg := cm.Get()
 		assert.NotNil(t, cfg)
-		assert.Equal(t, "debug", cfg.Mode)
+		assert.Equal(t, "production", cfg.Mode)
 
 		// 添加内存提供者
 		provider := config.NewMemoryConfigProvider()

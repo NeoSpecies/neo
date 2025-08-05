@@ -1,5 +1,7 @@
 # Neo Framework 测试指南
 
+**最后更新：2025-08-05**
+
 ## 目录
 1. [快速开始](#快速开始)
 2. [自动化测试](#自动化测试)
@@ -19,8 +21,35 @@
 - PHP 7.4+ 已安装（测试 PHP 服务，需要启用 sockets 扩展）
 - 确保端口 8080（HTTP网关）和 9999（IPC服务器）未被占用
 
+### 默认端口配置
+| 服务 | 默认端口 | 说明 |
+|------|----------|------|
+| **HTTP Gateway** | **8080** | Neo Framework HTTP API 网关 |
+| **IPC Server** | **9999** | Neo Framework IPC 通信端口 |
+
+**注意**：所有示例代码都已配置为使用这些默认端口。如需修改，请通过环境变量 `NEO_IPC_PORT` 和配置文件统一调整。
+
 ## 自动化测试
 
+### 单元测试
+运行所有单元测试：
+```bash
+go test ./internal/...
+```
+
+运行特定包的测试：
+```bash
+go test ./internal/config -v
+go test ./internal/transport -v
+```
+
+### 集成测试
+运行集成测试：
+```bash
+go test ./test/integration -v
+```
+
+### Python 测试脚本
 运行完整的测试套件：
 ```bash
 python test_framework.py
@@ -324,3 +353,8 @@ python test_all_languages.py
 ```
 
 这将测试所有语言的服务并生成 `test_report.md` 文件。
+
+---
+
+*文档编写：Cogito Yan (Neospecies AI)*  
+*联系方式：neospecies@outlook.com*

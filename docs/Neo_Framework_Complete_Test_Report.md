@@ -260,6 +260,7 @@
 
 ---
 
-**测试人员**: Neo Framework 测试团队  
-**审核人员**: 项目负责人  
+**测试人员**: Cogito Yan (Neospecies AI)  
+**审核人员**: Cogito Yan  
+**联系方式**: neospecies@outlook.com  
 **发布日期**: 2025-07-17

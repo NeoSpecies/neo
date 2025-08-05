@@ -2,6 +2,22 @@
 
 Neo 是一个基于 Go 语言的高性能微服务通信框架，旨在为分布式系统提供可靠、高效的服务间通信能力，并支持多语言服务集成。
 
+## 最新更新 (2025-08-05)
+
+### 项目结构优化
+- 移除了废弃的 `cmd/main.go` 文件，推荐使用 `cmd/neo/main.go` 作为主程序
+- 将测试用网关移至 `test/gateways/` 目录，保持生产代码的整洁
+- 添加 `go.work` 文件支持更好的多模块管理
+
+### 测试改进
+- 将集成测试从独立的 main 程序改为标准的包测试 (`test/integration/integration_test.go`)
+- 修复了所有单元测试中的类型不匹配和配置问题
+- 改进了测试覆盖率和可维护性
+
+### 配置修复
+- 修复了 YAML 配置文件中的时间格式问题（如 `shutdown_timeout: 10s`）
+- 统一了配置结构和默认值
+
 ## 项目概述
 
 ### 核心特性
@@ -93,6 +109,7 @@ neo/
 ├── logs/                      # 日志文件目录（git忽略）
 ├── go.mod                     # Go 模块定义
 ├── go.sum                     # Go 依赖锁定
+├── go.work                    # Go 工作区配置
 ├── start.bat                  # 快速启动脚本（Windows）
 ├── start.sh                   # 快速启动脚本（Unix）
 └── test_manual.md            # 手动测试指南
@@ -148,15 +165,33 @@ HTTP客户端 → HTTPGateway → AsyncService → AsyncTransport → AsyncIPCSe
 - Java 8+ （测试 Java 服务）
 - PHP 7.4+ （测试 PHP 服务，需要启用 sockets 扩展）
 
+### 默认端口配置
+
+| 服务 | 默认端口 | 说明 | 配置方式 |
+|------|----------|------|----------|
+| **HTTP Gateway** | **8080** | HTTP API 网关 | `configs/default.yml` → `http.port` |
+| **IPC Server** | **9999** | 内部进程通信 | `configs/default.yml` → `ipc.port` |
+
+**重要提示**：所有语言的示例代码都已配置为使用这些默认端口。通过环境变量 `NEO_IPC_PORT` 可以统一调整。
+
 ### 启动服务
 
 #### 1. 启动 Neo Framework
 ```bash
-# 使用默认配置启动
+# 编译并运行
+go build -o neo.exe ./cmd/neo
+./neo.exe
+
+# 或直接运行
 go run cmd/neo/main.go
 
-# 或使用特定环境配置
-go run cmd/neo/main.go -config configs/development.yml
+# 使用特定配置
+./neo.exe -config configs/development.yml
+
+# 使用环境变量配置端口（推荐）
+export NEO_IPC_PORT=9999
+export NEO_HTTP_PORT=8080
+./neo.exe
 ```
 
 您应该看到输出：
@@ -537,8 +572,11 @@ Neo Framework 通过 IPC 协议支持多种编程语言：
 
 ## 联系方式
 
+- 组织：Neospecies AI
+- 作者：Cogito Yan
+- 邮箱：neospecies@outlook.com
 - 项目主页：[https://github.com/NeoSpecies/neo/](https://github.com/NeoSpecies/neo/)
-- 问题追踪：[https://github.com/NeoSpecies/neo//issues](https://github.com/NeoSpecies/neo//issues)
+- 问题追踪：[https://github.com/NeoSpecies/neo/issues](https://github.com/NeoSpecies/neo/issues)
 
 ---
 

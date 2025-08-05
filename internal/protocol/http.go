@@ -1,11 +1,13 @@
 package protocol
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"neo/internal/types"
 	"strconv"
 	"time"
+	"unicode/utf8"
 )
 
 const (
@@ -46,12 +48,25 @@ func (c *HTTPCodec) Encode(msg types.Message) ([]byte, error) {
 		if json.Valid(msg.Body) {
 			bodyJSON = json.RawMessage(msg.Body)
 		} else {
-			// 如果不是JSON，尝试将其作为字符串编码
-			bodyBytes, err := json.Marshal(string(msg.Body))
-			if err != nil {
-				return nil, fmt.Errorf("failed to encode body as JSON: %w", err)
+			// 如果不是JSON，检查是否为有效的UTF-8文本
+			if utf8.Valid(msg.Body) {
+				// 如果是文本，作为字符串编码
+				bodyBytes, err := json.Marshal(string(msg.Body))
+				if err != nil {
+					return nil, fmt.Errorf("failed to encode body as JSON: %w", err)
+				}
+				bodyJSON = json.RawMessage(bodyBytes)
+			} else {
+				// 如果是二进制数据，使用base64编码
+				encoded := base64.StdEncoding.EncodeToString(msg.Body)
+				bodyBytes, err := json.Marshal(map[string]string{
+					"_base64": encoded,
+				})
+				if err != nil {
+					return nil, fmt.Errorf("failed to encode binary body: %w", err)
+				}
+				bodyJSON = json.RawMessage(bodyBytes)
 			}
-			bodyJSON = json.RawMessage(bodyBytes)
 		}
 	} else {
 		bodyJSON = json.RawMessage("null")
@@ -92,7 +107,31 @@ func (c *HTTPCodec) Decode(data []byte) (types.Message, error) {
 	// 将Body从JSON转换回字节数组
 	var body []byte
 	if len(httpMsg.Body) > 0 && string(httpMsg.Body) != "null" {
-		body = []byte(httpMsg.Body)
+		// 首先检查是否为base64编码的二进制数据
+		var base64Map map[string]string
+		if err := json.Unmarshal(httpMsg.Body, &base64Map); err == nil {
+			if encoded, ok := base64Map["_base64"]; ok {
+				// 解码base64数据
+				decoded, err := base64.StdEncoding.DecodeString(encoded)
+				if err == nil {
+					body = decoded
+				} else {
+					body = []byte(httpMsg.Body)
+				}
+			} else {
+				body = []byte(httpMsg.Body)
+			}
+		} else {
+			// 尝试将Body作为JSON字符串解码
+			var str string
+			if err := json.Unmarshal(httpMsg.Body, &str); err == nil {
+				// 如果成功解码为字符串，使用解码后的值
+				body = []byte(str)
+			} else {
+				// 否则直接使用原始字节
+				body = []byte(httpMsg.Body)
+			}
+		}
 	}
 	
 	return types.Message{

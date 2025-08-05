@@ -8,6 +8,16 @@
 - IPC Server 监听端口（默认 9999）
 - 你选择的编程语言环境
 
+### 重要提示：端口配置
+
+Neo Framework 的 IPC 端口可以通过配置文件或环境变量设置。请确保所有服务使用相同的端口配置：
+
+- **配置文件**：`configs/default.yml` 中的 `ipc.port` 设置（默认 9999）
+- **环境变量**：通过 `NEO_IPC_PORT` 环境变量覆盖默认端口
+- **启动脚本**：某些启动脚本可能使用不同的默认端口（如 29999）
+
+**建议**：在生产环境中，统一使用配置文件或环境变量来管理端口，避免硬编码。
+
 ## 快速开始步骤
 
 ### 1. 确认 Neo Framework 运行状态
@@ -399,7 +409,25 @@ async def process(params):
 ## 下一步
 
 - 阅读[完整协议文档](./IPC_PROTOCOL_GUIDE.md)了解更多细节
-- 查看[示例项目](../examples/)获取更多参考
-- 参与[社区讨论](https://github.com/neo-framework/discussions)
+- 查看[示例项目](../examples-ipc/)获取完整的多语言实现参考
+  - Python: `examples-ipc/python/service.py`
+  - Node.js: `examples-ipc/nodejs/service.js`
+  - Java: `examples-ipc/java/Service.java`
+  - Go: `examples-ipc/go/service.go`
+  - PHP: `examples-ipc/php/service.php`
+- 联系我们：neospecies@outlook.com
+
+### 示例代码说明
+
+所有 `examples-ipc` 目录下的示例代码都经过测试验证，正确实现了 Neo IPC 协议：
+- 使用 4 字节小端序（LittleEndian）格式
+- 完整实现了服务注册、请求处理、心跳机制
+- 包含了错误处理和日志记录
+- 可直接作为生产代码的参考模板
 
 恭喜！你已经成功将服务接入 Neo Framework。
+
+---
+
+*文档编写：Cogito Yan (Neospecies AI)*  
+*联系方式：neospecies@outlook.com*

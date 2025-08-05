@@ -108,8 +108,29 @@ Neo Framework 采用自定义的二进制 IPC（进程间通信）协议，支�
 
 ```
 默认地址：localhost:9999
-可通过配置文件修改
 ```
+
+#### 端口配置方式
+
+1. **配置文件**（推荐）
+   ```yaml
+   # configs/default.yml
+   ipc:
+     port: 9999
+   ```
+
+2. **环境变量**
+   ```bash
+   export NEO_IPC_PORT=9999
+   export NEO_IPC_HOST=localhost
+   ```
+
+3. **命令行参数**
+   ```bash
+   ./neo.exe -ipc :9999
+   ```
+
+**注意**：优先级为 命令行参数 > 环境变量 > 配置文件
 
 ### 2. 发送注册消息
 
@@ -1076,4 +1097,9 @@ def debug_message(data):
 
 Neo Framework 的 IPC 协议设计简洁高效，通过标准的 TCP 连接和二进制协议，支持多语言服务的接入。遵循本指南的规范和示例，可以快速实现稳定可靠的服务集成。
 
-如有问题，请参考项目源码或提交 Issue。
+如有问题，请参考项目源码或联系 neospecies@outlook.com。
+
+---
+
+*文档编写：Cogito Yan (Neospecies AI)*  
+*联系方式：neospecies@outlook.com*

@@ -12,7 +12,13 @@ import (
 
 // TestExecute_SuccessOnFirstAttempt 测试首次尝试即成功的情况
 func TestExecute_SuccessOnFirstAttempt(t *testing.T) {
-	cfg := config.NewConfig()
+	cfg := &config.Config{
+		Transport: config.TransportConfig{
+			RetryCount:     3,
+			InitialBackoff: config.Duration(100 * time.Millisecond),
+			MaxBackoff:     config.Duration(5 * time.Second),
+		},
+	}
 	policy := NewRetryPolicy(cfg)
 	ctx := context.Background()
 
@@ -32,8 +38,13 @@ func TestExecute_SuccessOnFirstAttempt(t *testing.T) {
 
 // TestExecute_RetryUntilSuccess 测试重试直到成功的情况
 func TestExecute_RetryUntilSuccess(t *testing.T) {
-	cfg := config.NewConfig()
-	cfg.Transport.MaxRetries = 3 // 设置最大重试次数为3
+	cfg := &config.Config{
+		Transport: config.TransportConfig{
+			RetryCount:     3,
+			InitialBackoff: config.Duration(100 * time.Millisecond),
+			MaxBackoff:     config.Duration(5 * time.Second),
+		},
+	}
 	policy := NewRetryPolicy(cfg)
 	ctx := context.Background()
 
@@ -58,8 +69,13 @@ func TestExecute_RetryUntilSuccess(t *testing.T) {
 
 // TestExecute_MaxRetriesExceeded 测试达到最大重试次数的情况
 func TestExecute_MaxRetriesExceeded(t *testing.T) {
-	cfg := config.NewConfig()
-	cfg.Transport.MaxRetries = 3
+	cfg := &config.Config{
+		Transport: config.TransportConfig{
+			RetryCount:     3,
+			InitialBackoff: config.Duration(100 * time.Millisecond),
+			MaxBackoff:     config.Duration(5 * time.Second),
+		},
+	}
 	policy := NewRetryPolicy(cfg)
 	ctx := context.Background()
 
@@ -74,9 +90,9 @@ func TestExecute_MaxRetriesExceeded(t *testing.T) {
 	if err != expectedErr {
 		t.Errorf("expected error %v, got %v", expectedErr, err)
 	}
-	// 修复断言：预期尝试次数 = MaxRetries + 1
-	if attemptCount != cfg.Transport.MaxRetries+1 {
-		t.Errorf("expected %d attempts, got %d", cfg.Transport.MaxRetries+1, attemptCount)
+	// 修复断言：预期尝试次数 = RetryCount + 1
+	if attemptCount != cfg.Transport.RetryCount+1 {
+		t.Errorf("expected %d attempts, got %d", cfg.Transport.RetryCount+1, attemptCount)
 	}
 
 	// 删除以下错误引入的代码块
@@ -93,8 +109,13 @@ func TestExecute_MaxRetriesExceeded(t *testing.T) {
 
 // TestExecute_ContextCancelled 测试上下文取消的情况
 func TestExecute_ContextCancelled(t *testing.T) {
-	cfg := config.NewConfig()
-	cfg.Transport.MaxRetries = 5
+	cfg := &config.Config{
+		Transport: config.TransportConfig{
+			RetryCount:     5,
+			InitialBackoff: config.Duration(100 * time.Millisecond),
+			MaxBackoff:     config.Duration(5 * time.Second),
+		},
+	}
 	policy := NewRetryPolicy(cfg)
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -115,18 +136,21 @@ func TestExecute_ContextCancelled(t *testing.T) {
 		t.Errorf("expected context.Canceled, got %v", err)
 	}
 	// 调整判断条件：尝试次数应大于1且小于最大重试次数
-	if attemptCount <= 1 || attemptCount >= cfg.Transport.MaxRetries {
-		t.Errorf("expected attempts between 2 and %d, got %d", cfg.Transport.MaxRetries-1, attemptCount)
+	if attemptCount <= 1 || attemptCount >= cfg.Transport.RetryCount {
+		t.Errorf("expected attempts between 2 and %d, got %d", cfg.Transport.RetryCount-1, attemptCount)
 	}
 }
 
 // TestExponentialBackoff 测试指数退避逻辑
 func TestExponentialBackoff(t *testing.T) {
 	// 使用正确的配置字段名（与retry.go中保持一致）
-	cfg := config.NewConfig()
-	cfg.Transport.MaxRetries = 4
-	cfg.Transport.InitialBackoff = 10 // 单位：毫秒
-	cfg.Transport.MaxBackoff = 100    // 单位：毫秒
+	cfg := &config.Config{
+		Transport: config.TransportConfig{
+			RetryCount:     4,
+			InitialBackoff: config.Duration(10 * time.Millisecond),
+			MaxBackoff:     config.Duration(100 * time.Millisecond),
+		},
+	}
 
 	policy := NewRetryPolicy(cfg)
 
@@ -161,9 +185,9 @@ func TestExecute_SingleAttempt(t *testing.T) {
 	// 配置零重试（实际执行1次尝试）
 	cfg := &config.Config{
 		Transport: config.TransportConfig{
-			MaxRetries:     0, // 零重试配置
-			InitialBackoff: 100,
-			MaxBackoff:     500,
+			RetryCount:     0, // 零重试配置
+			InitialBackoff: config.Duration(100 * time.Millisecond),
+			MaxBackoff:     config.Duration(500 * time.Millisecond),
 		},
 	}
 	policy := NewRetryPolicy(cfg)

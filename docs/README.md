@@ -35,12 +35,14 @@ curl -X POST http://localhost:8080/api/demo-service-python/hello \
 ### 开发指南
 - **[IPC快速开始](IPC_QUICK_START.md)** - 5分钟上手IPC服务开发
 - **[IPC协议指南](IPC_PROTOCOL_GUIDE.md)** - IPC二进制协议详细规范
-- **[端口管理](PORT_MANAGEMENT.md)** - 端口配置和冲突解决
+- **[统一端口配置](UNIFIED_PORT_CONFIGURATION.md)** 🔴 - 重要：默认端口说明和最佳实践
+- **[端口管理](PORT_MANAGEMENT.md)** - 端口配置和冲突解决工具
 - **[Git忽略文件指南](GITIGNORE_GUIDE.md)** - 保护敏感信息
 
 ### 测试文档
 - **[测试手册](TEST_MANUAL.md)** ⭐ - 全面的测试步骤和故障排查
 - **[完整测试报告](Neo_Framework_Complete_Test_Report.md)** - 五种语言服务的测试结果
+- **[IPC示例测试报告](IPC_EXAMPLES_TEST_REPORT.md)** 🆕 - 最新的IPC示例深度测试和问题分析
 - **[测试计划](NeoTestingPlan.md)** - 测试策略和质量保证
 
 ### 配置管理
@@ -109,7 +111,7 @@ Neo Framework 支持以下编程语言的服务集成：
 
 ---
 
-**文档版本**：1.0.0  
-**最后更新**：2025-07-17
+**文档版本**：1.0.1  
+**最后更新**：2025-08-05
 
 如有任何问题，请查阅具体文档或在项目Issue中提问。
