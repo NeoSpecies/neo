@@ -8,24 +8,35 @@
 - IPC Server 监听端口（默认 9999）
 - 你选择的编程语言环境
 
-### 重要提示：端口配置
+### 系统架构说明
 
-Neo Framework 的 IPC 端口可以通过配置文件或环境变量设置。请确保所有服务使用相同的端口配置：
+Neo Framework v3.0 采用微服务架构，网关服务已独立：
 
-- **配置文件**：`configs/default.yml` 中的 `ipc.port` 设置（默认 9999）
-- **环境变量**：通过 `NEO_IPC_PORT` 环境变量覆盖默认端口
-
-**建议**：在生产环境中，统一使用配置文件或环境变量来管理端口，避免硬编码。所有环境都应使用统一的默认端口（8080 和 9999）。
+- **Neo Core**：IPC服务器，端口 9999
+- **HTTP Gateway**：独立服务，端口 8081
+- **TCP Gateway**：独立服务，端口 7777
 
 ## 快速开始步骤
 
-### 1. 确认 Neo Framework 运行状态
+### 1. 启动系统
 
 ```bash
-# 检查服务是否运行
-curl http://localhost:8080/health
+# 编译所有服务
+cd scripts/build
+build-all.bat
 
-# 检查 IPC 端口
+# 启动整个系统
+cd ..
+start-all.bat
+```
+
+### 2. 确认服务运行状态
+
+```bash
+# 检查HTTP网关
+curl http://localhost:8081/api/http-gateway/getInfo
+
+# 检查IPC端口
 telnet localhost 9999
 ```
 
@@ -141,11 +152,11 @@ go run main.go
 
 ### 3. 测试你的服务
 
-通过 HTTP 网关调用你的服务：
+通过独立的 HTTP 网关调用你的服务：
 
 ```bash
-# 调用 greet 方法
-curl -X POST http://localhost:8080/api/python-demo/greet \
+# 调用 greet 方法（注意端口是8081）
+curl -X POST http://localhost:8081/api/python-demo/greet \
   -H "Content-Type: application/json" \
   -d '{"name": "Neo"}'
 
@@ -153,12 +164,18 @@ curl -X POST http://localhost:8080/api/python-demo/greet \
 # {"message": "Hello, Neo! Welcome to Neo Framework."}
 
 # 调用 calculate 方法
-curl -X POST http://localhost:8080/api/python-demo/calculate \
+curl -X POST http://localhost:8081/api/python-demo/calculate \
   -H "Content-Type: application/json" \
   -d '{"a": 10, "b": 20, "operation": "add"}'
 
 # 响应：
 # {"result": 30}
+```
+
+或通过 TCP 网关测试：
+```bash
+cd bin
+test_client.exe localhost:7777
 ```
 
 ## 完整项目结构示例

@@ -40,14 +40,15 @@ type IPCConfig struct {
 
 // IPCServer IPC服务器，处理进程间通信
 type IPCServer struct {
-	addr         string
-	listener     net.Listener
-	registry     registry.ServiceRegistry
-	clients      sync.Map // clientID -> *IPCClient
-	handlers     sync.Map // service -> net.Conn
-	mu           sync.RWMutex
-	asyncHandler ResponseHandler // 异步响应处理器
-	config       IPCConfig      // IPC配置
+	addr            string
+	listener        net.Listener
+	registry        registry.ServiceRegistry
+	clients         sync.Map // clientID -> *IPCClient
+	handlers        sync.Map // service -> net.Conn
+	mu              sync.RWMutex
+	asyncHandler    ResponseHandler // 异步响应处理器
+	config          IPCConfig      // IPC配置
+	pendingRequests sync.Map        // requestID -> net.Conn (发起请求的连接)
 }
 
 // ResponseHandler 响应处理接口
@@ -159,6 +160,8 @@ func (s *IPCServer) handleClient(client *IPCClient) {
 		switch msg.Type {
 		case TypeRegister:
 			s.handleRegister(client, msg)
+		case TypeRequest:
+			s.handleRequest(client, msg)
 		case TypeResponse:
 			s.handleResponse(client, msg)
 		case TypeHeartbeat:
@@ -167,6 +170,59 @@ func (s *IPCServer) handleClient(client *IPCClient) {
 			fmt.Printf("Unknown message type: %v\n", msg.Type)
 		}
 	}
+}
+
+// handleRequest 处理请求消息并转发给目标服务
+func (s *IPCServer) handleRequest(client *IPCClient, msg *IPCMessage) {
+	fmt.Printf("handleRequest: Received request from %s\n", client.conn.RemoteAddr())
+	fmt.Printf("  Request ID: %s\n", msg.ID)
+	fmt.Printf("  Target Service: %s\n", msg.Service)
+	fmt.Printf("  Method: %s\n", msg.Method)
+	
+	// 查找目标服务的连接
+	targetConnInterface, ok := s.handlers.Load(msg.Service)
+	if !ok {
+		fmt.Printf("handleRequest: Service '%s' not found\n", msg.Service)
+		// 发送错误响应给请求者
+		errorResp := &IPCMessage{
+			Type:    TypeResponse,
+			ID:      msg.ID,
+			Service: msg.Service,
+			Method:  msg.Method,
+			Metadata: map[string]string{
+				"error": "true",
+			},
+			Data: []byte(fmt.Sprintf(`{"error":"Service '%s' not found"}`, msg.Service)),
+		}
+		s.writeMessage(client.conn, errorResp)
+		return
+	}
+	
+	targetConn := targetConnInterface.(net.Conn)
+	fmt.Printf("handleRequest: Forwarding request to %s at %s\n", msg.Service, targetConn.RemoteAddr())
+	
+	// 转发请求给目标服务
+	if err := s.writeMessage(targetConn, msg); err != nil {
+		fmt.Printf("handleRequest: Failed to forward request: %v\n", err)
+		// 发送错误响应给请求者
+		errorResp := &IPCMessage{
+			Type:    TypeResponse,
+			ID:      msg.ID,
+			Service: msg.Service,
+			Method:  msg.Method,
+			Metadata: map[string]string{
+				"error": "true",
+			},
+			Data: []byte(fmt.Sprintf(`{"error":"Failed to forward request: %v"}`, err)),
+		}
+		s.writeMessage(client.conn, errorResp)
+		return
+	}
+	
+	// 保存请求者连接，以便响应时能找到
+	s.pendingRequests.Store(msg.ID, client.conn)
+	
+	fmt.Printf("handleRequest: Request forwarded successfully\n")
 }
 
 // handleRegister 处理服务注册
@@ -225,14 +281,29 @@ func (s *IPCServer) handleRegister(client *IPCClient, msg *IPCMessage) {
 // handleResponse 处理响应消息
 func (s *IPCServer) handleResponse(client *IPCClient, msg *IPCMessage) {
 	fmt.Printf("handleResponse: Received response for request %s\n", msg.ID)
+	fmt.Printf("handleResponse: Response from %s\n", client.conn.RemoteAddr())
 	fmt.Printf("handleResponse: Response data length: %d bytes\n", len(msg.Data))
 	
-	// 如果有AsyncIPCServer实例，转发响应到请求处理器
-	if s.asyncHandler != nil {
-		fmt.Printf("handleResponse: Forwarding response to AsyncHandler\n")
-		s.asyncHandler.HandleResponse(msg)
+	// 查找原始请求者的连接
+	requesterConnInterface, ok := s.pendingRequests.LoadAndDelete(msg.ID)
+	if ok {
+		requesterConn := requesterConnInterface.(net.Conn)
+		fmt.Printf("handleResponse: Forwarding response to requester at %s\n", requesterConn.RemoteAddr())
+		
+		// 转发响应给原始请求者
+		if err := s.writeMessage(requesterConn, msg); err != nil {
+			fmt.Printf("handleResponse: Failed to forward response: %v\n", err)
+		} else {
+			fmt.Printf("handleResponse: Response forwarded successfully\n")
+		}
 	} else {
-		fmt.Printf("handleResponse: No AsyncHandler configured\n")
+		fmt.Printf("handleResponse: No pending request found for ID %s\n", msg.ID)
+		
+		// 如果有AsyncIPCServer实例，也尝试通过它处理
+		if s.asyncHandler != nil {
+			fmt.Printf("handleResponse: Forwarding to AsyncHandler\n")
+			s.asyncHandler.HandleResponse(msg)
+		}
 	}
 }
 
